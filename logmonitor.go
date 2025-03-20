@@ -181,8 +181,18 @@ func followLogFile(filePath string, file *os.File) {
 				// Update last known size
 				lastSize = currentInfo.Size()
 				
-				// Wait a bit before trying again
-				time.Sleep(1 * time.Second)
+				// Check if the file has grown since we last read it
+				if currentInfo.Size() > currentPos {
+					// File has grown, seek to where we left off
+					file.Seek(currentPos, io.SeekStart)
+					reader = bufio.NewReader(file)
+					if debug {
+						log.Printf("File %s has grown, continuing from position %d", filePath, currentPos)
+					}
+				} else {
+					// Wait a bit before trying again
+					time.Sleep(1 * time.Second)
+				}
 				continue
 			}
 			
