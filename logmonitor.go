@@ -177,7 +177,11 @@ func followLogFile(filePath string, file *os.File) {
 			continue
 		}
 
-		processLogEntry(strings.TrimSpace(line), filePath)
+		trimmedLine := strings.TrimSpace(line)
+		if verbose {
+			log.Printf("Processing log line from %s: %s", filePath, trimmedLine)
+		}
+		processLogEntry(trimmedLine, filePath)
 	}
 }
 

@@ -139,7 +139,8 @@ This approach ensures that:
 | `-blocklist` | `/etc/apacheblock/blocklist.json` | Path to blocklist file |
 | `-rules` | `/etc/apacheblock/rules.json` | Path to rules file |
 | `-table` | `apacheblock` | Name of the iptables chain to use |
-| `-debug` | `false` | Enable debug mode for verbose logging |
+| `-debug` | `false` | Enable debug mode for basic logging |
+| `-verbose` | `false` | Enable verbose debug mode (logs all processed lines and rule matching) |
 | `-clean` | `false` | Remove all existing port blocking rules |
 
 ### Client Mode Options

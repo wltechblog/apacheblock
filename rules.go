@@ -152,20 +152,38 @@ func createDefaultRulesFile() error {
 
 // matchRule checks if a log line matches a rule and returns the IP address and reason if it does
 func matchRule(line string, format string) (string, string, bool) {
+	if verbose {
+		log.Printf("Matching rules for log format: %s", format)
+	}
+	
 	for _, rule := range rules {
 		// Skip rules that don't apply to this log format
 		if rule.LogFormat != "all" && rule.LogFormat != format {
+			if verbose {
+				log.Printf("Skipping rule %s (format mismatch: %s)", rule.Name, rule.LogFormat)
+			}
 			continue
 		}
 		
 		// Skip disabled rules
 		if !rule.Enabled || rule.compiledRegex == nil {
+			if verbose {
+				log.Printf("Skipping rule %s (disabled or invalid regex)", rule.Name)
+			}
 			continue
+		}
+		
+		if verbose {
+			log.Printf("Trying rule %s with regex: %s", rule.Name, rule.Regex)
 		}
 		
 		// Check if the line matches the rule
 		matches := rule.compiledRegex.FindStringSubmatch(line)
 		if matches != nil {
+			if verbose {
+				log.Printf("Rule %s matched! Capture groups: %v", rule.Name, matches)
+			}
+			
 			// For Apache-style rules, the IP is typically the first capture group
 			if format == "apache" && len(matches) > 1 {
 				ip := matches[1]
@@ -173,6 +191,11 @@ func matchRule(line string, format string) (string, string, bool) {
 				if len(matches) > 2 {
 					reason += " " + matches[2]
 				}
+				
+				if verbose {
+					log.Printf("Apache match: IP=%s, Reason=%s", ip, reason)
+				}
+				
 				return ip, reason, true
 			}
 			
@@ -183,11 +206,28 @@ func matchRule(line string, format string) (string, string, bool) {
 					// Check if the URI matches our rule (already confirmed by regex)
 					if (entry.Status == 403 || entry.Status == 404) && 
 					   entry.Request.ClientIP != "" {
-						return entry.Request.ClientIP, rule.Name + " " + fmt.Sprint(entry.Status), true
+						reason := rule.Name + " " + fmt.Sprint(entry.Status)
+						
+						if verbose {
+							log.Printf("Caddy match: IP=%s, Reason=%s", entry.Request.ClientIP, reason)
+						}
+						
+						return entry.Request.ClientIP, reason, true
+					} else if verbose {
+						log.Printf("Caddy match but status (%d) or ClientIP (%s) not valid", 
+							entry.Status, entry.Request.ClientIP)
 					}
+				} else if verbose {
+					log.Printf("Failed to parse Caddy JSON: %v", err)
 				}
 			}
+		} else if verbose {
+			log.Printf("Rule %s did not match", rule.Name)
 		}
+	}
+	
+	if verbose {
+		log.Printf("No rules matched for this line")
 	}
 	
 	return "", "", false

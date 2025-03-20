@@ -14,6 +14,7 @@ func main() {
 	server := flag.String("server", "apache", "Log format: apache or caddy")
 	logPath := flag.String("logPath", "/var/customers/logs", "Log path")
 	Debug := flag.Bool("debug", false, "Debug mode")
+	Verbose := flag.Bool("verbose", false, "Verbose debug mode (logs all processed lines)")
 	whitelistPath := flag.String("whitelist", whitelistFilePath, "Path to whitelist file")
 	blocklistPath := flag.String("blocklist", blocklistFilePath, "Path to blocklist file")
 	rulesPath := flag.String("rules", rulesFilePath, "Path to rules file")
@@ -42,6 +43,12 @@ func main() {
 	if *Debug {
 		debug = true
 		log.Println("Enabling debug mode")
+	}
+	
+	if *Verbose {
+		verbose = true
+		debug = true // Verbose implies debug
+		log.Println("Enabling verbose debug mode")
 	}
 	
 	// Set the file paths and table name

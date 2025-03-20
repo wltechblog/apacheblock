@@ -12,6 +12,7 @@ var (
 	whitelist         = map[string]bool{}
 	fileSuffix        = "access.log" // Log file suffix
 	debug             = false
+	verbose           = false        // Verbose debug mode
 	ipAccessLog       = make(map[string]*AccessRecord)
 	blockedIPs        = make(map[string]struct{})
 	blockedSubnets    = make(map[string]struct{})
