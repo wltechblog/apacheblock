@@ -422,15 +422,38 @@ func processLogEntry(line, filePath string) {
 		return
 	}
 	
+	// Check if IP or subnet is already blocked, but don't return early
+	// This allows us to continue counting hits for subnet blocking
+	ipBlocked := false
+	subnetBlocked := false
+	subnet := getSubnet(ip)
+	
+	mu.Lock()
 	if _, blocked := blockedIPs[ip]; blocked {
-		if debug {
-			log.Printf("IP %s is already blocked, ignoring", ip)
-		}
-		return
+		ipBlocked = true
 	}
-	if _, blocked := blockedSubnets[getSubnet(ip)]; blocked {
+	
+	if _, blocked := blockedSubnets[subnet]; blocked {
+		subnetBlocked = true
+	}
+	mu.Unlock()
+	
+	if ipBlocked {
 		if debug {
-			log.Printf("Subnet %s is already blocked, ignoring", getSubnet(ip))
+			log.Printf("IP %s is already blocked, continuing to count for subnet analysis", ip)
+		}
+	}
+	
+	if subnetBlocked {
+		if debug {
+			log.Printf("Subnet %s is already blocked, continuing to count for metrics", subnet)
+		}
+	}
+	
+	// If both IP and subnet are already blocked, we can skip further processing
+	if ipBlocked && subnetBlocked {
+		if debug {
+			log.Printf("Both IP %s and subnet %s are already blocked, skipping further processing", ip, subnet)
 		}
 		return
 	}
@@ -481,21 +504,35 @@ func processLogEntry(line, filePath string) {
 		log.Printf("Blocking IP %s: %d/%d suspicious requests (%s)",
 			ip, record.Count, ruleThreshold, record.Reason)
 		
-		blockIP(ip, filePath, reason)
+		// Only block the IP if it's not already blocked
+		if !ipBlocked {
+			blockIP(ip, filePath, reason)
+		} else {
+			log.Printf("IP %s is already blocked, ensuring firewall rule exists", ip)
+			// Ensure the firewall rule exists - don't lock the mutex here
+			if err := addBlockRule(ip); err != nil {
+				log.Printf("Failed to ensure block rule for IP %s: %v", ip, err)
+			}
+		}
 		
-		// Check if we should block the subnet
-		subnet := getSubnet(ip)
-		if subnet != "" {
+		// We already have the subnet variable from earlier
+		if subnet != "" && !subnetBlocked {
+			// Update subnet access count
+			var count int
 			mu.Lock()
 			subnetAccessCount[subnet]++
-			count := subnetAccessCount[subnet]
+			count = subnetAccessCount[subnet]
 			mu.Unlock()
+			
+			log.Printf("Subnet %s has %d/%d IPs with suspicious activity",
+				subnet, count, subnetThreshold)
 			
 			if count >= subnetThreshold {
 				// Always log subnet blocking actions, even when not in verbose mode
 				log.Printf("Blocking subnet %s: %d/%d IPs with suspicious activity",
 					subnet, count, subnetThreshold)
 				
+				// Don't hold the mutex while calling blockSubnet
 				blockSubnet(subnet)
 			}
 		}

@@ -153,31 +153,36 @@ func removePortBlockingRules() error {
 
 // blockIP adds an IP to the blocklist and blocks it in the firewall
 func blockIP(ip, filePath string, rule string) {
-	mu.Lock()
-	defer mu.Unlock()
-	
 	// Check if the IP is already in the blocklist
 	alreadyBlocked := false
+	
+	mu.Lock()
 	if _, exists := blockedIPs[ip]; exists {
-		if debug {
-			log.Printf("IP %s is already in the blocklist, ensuring firewall rule exists", ip)
-		}
 		alreadyBlocked = true
 	} else {
 		// Add to our blocklist
 		blockedIPs[ip] = struct{}{}
+	}
+	mu.Unlock()
+	
+	if alreadyBlocked {
+		if debug {
+			log.Printf("IP %s is already in the blocklist, ensuring firewall rule exists", ip)
+		}
 	}
 	
 	// Always add the block rule to our custom chain to ensure it exists
 	if err := addBlockRule(ip); err != nil {
 		log.Printf("Failed to block IP %s: %v", ip, err)
 		if !alreadyBlocked {
+			mu.Lock()
 			delete(blockedIPs, ip) // Remove from blocklist if we couldn't block it and it wasn't already there
+			mu.Unlock()
 		}
 		return
 	}
 
-	// Save the updated blocklist
+	// Save the updated blocklist - don't hold the mutex while doing this
 	if err := saveBlockList(); err != nil {
 		log.Printf("Warning: Failed to save blocklist after blocking IP %s: %v", ip, err)
 		// Log more details about the error
@@ -209,47 +214,64 @@ func blockIP(ip, filePath string, rule string) {
 
 // blockSubnet adds a subnet to the blocklist and blocks it in the firewall
 func blockSubnet(subnet string) {
-	mu.Lock()
-	defer mu.Unlock()
-	
+	// Check if the subnet is already in the blocklist
 	alreadyBlocked := false
+	
+	mu.Lock()
 	if _, exists := blockedSubnets[subnet]; exists {
-		if debug {
-			log.Printf("Subnet %s is already in the blocklist, ensuring firewall rule exists", subnet)
-		}
 		alreadyBlocked = true
 	} else {
 		// Add to our blocklist
 		blockedSubnets[subnet] = struct{}{}
 	}
 	
+	// If this is a new subnet block, identify IPs to remove
+	ipsToRemove := make([]string, 0)
+	if !alreadyBlocked {
+		for ip := range blockedIPs {
+			if strings.HasPrefix(ip, strings.TrimSuffix(subnet, ".0/24")) {
+				ipsToRemove = append(ipsToRemove, ip)
+			}
+		}
+	}
+	mu.Unlock()
+	
+	if alreadyBlocked {
+		if debug {
+			log.Printf("Subnet %s is already in the blocklist, ensuring firewall rule exists", subnet)
+		}
+	}
+	
 	// Always add the block rule to our custom chain to ensure it exists
 	if err := addBlockRule(subnet); err != nil {
 		log.Printf("Failed to block subnet %s: %v", subnet, err)
 		if !alreadyBlocked {
+			mu.Lock()
 			delete(blockedSubnets, subnet) // Remove from blocklist if we couldn't block it and it wasn't already there
+			mu.Unlock()
 		}
 		return
 	}
 
 	// If this is a new subnet block, remove individual IP rules for this subnet
-	if !alreadyBlocked {
-		// Remove individual IP rules for this subnet from our custom chain
-		for ip := range blockedIPs {
-			if strings.HasPrefix(ip, strings.TrimSuffix(subnet, ".0/24")) {
-				// Remove from our blocklist
-				delete(blockedIPs, ip)
-				
-				// Remove from the firewall (ignore errors since we're replacing with subnet rule)
-				cmd := exec.Command("iptables", "-t", "filter", "-D", firewallTable, "-s", ip, "-p", "tcp", "--dport", "80", "-j", "DROP")
-				cmd.Run()
-				cmd = exec.Command("iptables", "-t", "filter", "-D", firewallTable, "-s", ip, "-p", "tcp", "--dport", "443", "-j", "DROP")
-				cmd.Run()
-			}
+	if !alreadyBlocked && len(ipsToRemove) > 0 {
+		mu.Lock()
+		// Remove IPs from our blocklist
+		for _, ip := range ipsToRemove {
+			delete(blockedIPs, ip)
+		}
+		mu.Unlock()
+		
+		// Remove from the firewall (ignore errors since we're replacing with subnet rule)
+		for _, ip := range ipsToRemove {
+			cmd := exec.Command("iptables", "-t", "filter", "-D", firewallTable, "-s", ip, "-p", "tcp", "--dport", "80", "-j", "DROP")
+			cmd.Run()
+			cmd = exec.Command("iptables", "-t", "filter", "-D", firewallTable, "-s", ip, "-p", "tcp", "--dport", "443", "-j", "DROP")
+			cmd.Run()
 		}
 	}
 
-	// Save the updated blocklist
+	// Save the updated blocklist - don't hold the mutex while doing this
 	if err := saveBlockList(); err != nil {
 		log.Printf("Warning: Failed to save blocklist after blocking subnet %s: %v", subnet, err)
 		// Log more details about the error
@@ -275,7 +297,7 @@ func blockSubnet(subnet string) {
 	if alreadyBlocked {
 		log.Printf("Ensured firewall rule exists for subnet %s", subnet)
 	} else {
-		log.Printf("Blocked subnet %s and removed individual IPs", subnet)
+		log.Printf("Blocked subnet %s and removed %d individual IPs", subnet, len(ipsToRemove))
 	}
 }
 
