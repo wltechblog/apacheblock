@@ -12,8 +12,8 @@ import (
 // setupFirewallTable creates our custom iptables table and chain if they don't exist
 // and sets up the necessary rules to use it for incoming connections
 func setupFirewallTable() error {
-	// Check if our chain exists
-	cmd := exec.Command("iptables", "-t", "filter", "-L", firewallTable)
+	// Check if our chain exists (use -n to disable DNS lookups)
+	cmd := exec.Command("iptables", "-t", "filter", "-L", firewallTable, "-n")
 	if err := cmd.Run(); err != nil {
 		// Chain doesn't exist, create it
 		log.Printf("Creating custom iptables chain: %s", firewallTable)
@@ -92,12 +92,12 @@ func flushFirewallTable() error {
 // addBlockRule adds a block rule for an IP or subnet to our custom chain
 // This improved version checks if the rule already exists before adding it
 func addBlockRule(target string) error {
-	// Check if the rule for port 80 already exists
-	cmd := exec.Command("iptables", "-t", "filter", "-C", firewallTable, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
+	// Check if the rule for port 80 already exists (use -n to disable DNS lookups)
+	cmd := exec.Command("iptables", "-t", "filter", "-C", firewallTable, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP", "-n")
 	port80Exists := cmd.Run() == nil
 
-	// Check if the rule for port 443 already exists
-	cmd = exec.Command("iptables", "-t", "filter", "-C", firewallTable, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
+	// Check if the rule for port 443 already exists (use -n to disable DNS lookups)
+	cmd = exec.Command("iptables", "-t", "filter", "-C", firewallTable, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP", "-n")
 	port443Exists := cmd.Run() == nil
 
 	// If both rules already exist, we're done
@@ -152,8 +152,8 @@ func removeBlockRule(target string) error {
 
 // removePortBlockingRules removes all rules in our custom chain
 func removePortBlockingRules() error {
-	// Check if our chain exists
-	cmd := exec.Command("iptables", "-t", "filter", "-L", firewallTable)
+	// Check if our chain exists (use -n to disable DNS lookups)
+	cmd := exec.Command("iptables", "-t", "filter", "-L", firewallTable, "-n")
 	if err := cmd.Run(); err != nil {
 		// Chain doesn't exist, nothing to do
 		log.Printf("Chain %s doesn't exist, nothing to remove", firewallTable)
