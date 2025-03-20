@@ -44,6 +44,8 @@ func setupFirewallTable() error {
 			if err := cmd.Run(); err != nil {
 				return fmt.Errorf("failed to add chain to INPUT: %v", err)
 			}
+		} else {
+			log.Printf("Chain %s is already connected to INPUT chain", firewallTable)
 		}
 		
 		// Flush the chain to start fresh
@@ -52,6 +54,17 @@ func setupFirewallTable() error {
 		}
 		
 		log.Printf("Using existing iptables chain: %s (flushed)", firewallTable)
+	}
+	
+	// Double-check that our chain is properly connected to the INPUT chain
+	cmd = exec.Command("iptables", "-t", "filter", "-C", "INPUT", "-j", firewallTable)
+	if err := cmd.Run(); err != nil {
+		log.Printf("Warning: Chain %s is not properly connected to INPUT chain, attempting to connect", firewallTable)
+		cmd = exec.Command("iptables", "-t", "filter", "-I", "INPUT", "1", "-j", firewallTable)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to connect chain to INPUT: %v", err)
+		}
+		log.Printf("Successfully connected chain %s to INPUT chain", firewallTable)
 	}
 	
 	return nil
@@ -141,7 +154,18 @@ func blockIP(ip, filePath string, rule string) {
 	mu.Lock()
 	defer mu.Unlock()
 	
+	// Check if the IP is already in the blocklist
 	if _, exists := blockedIPs[ip]; exists {
+		if debug {
+			log.Printf("IP %s is already in the blocklist, ensuring firewall rule exists", ip)
+		}
+		
+		// Even if it's already in the blocklist, try to add the rule to ensure it's in the firewall
+		if err := addBlockRule(ip); err != nil {
+			log.Printf("Failed to ensure block rule for IP %s: %v", ip, err)
+		} else if debug {
+			log.Printf("Ensured firewall rule exists for IP %s", ip)
+		}
 		return
 	}
 
@@ -169,6 +193,16 @@ func blockSubnet(subnet string) {
 	defer mu.Unlock()
 	
 	if _, exists := blockedSubnets[subnet]; exists {
+		if debug {
+			log.Printf("Subnet %s is already in the blocklist, ensuring firewall rule exists", subnet)
+		}
+		
+		// Even if it's already in the blocklist, try to add the rule to ensure it's in the firewall
+		if err := addBlockRule(subnet); err != nil {
+			log.Printf("Failed to ensure block rule for subnet %s: %v", subnet, err)
+		} else if debug {
+			log.Printf("Ensured firewall rule exists for subnet %s", subnet)
+		}
 		return
 	}
 
