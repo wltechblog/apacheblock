@@ -138,6 +138,8 @@ func followLogFile(filePath string, file *os.File) {
 	}
 
 	reader := bufio.NewReader(file)
+	lastSize := int64(0)
+	
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -157,7 +159,17 @@ func followLogFile(filePath string, file *os.File) {
 					return
 				}
 				
-				if currentInfo.Size() == 0 {
+				// Get current file position
+				currentPos, posErr := file.Seek(0, io.SeekCurrent)
+				if posErr != nil {
+					log.Printf("Error getting file position: %v", posErr)
+					return
+				}
+				
+				// File is truncated if size is 0 or if our position is beyond the end of file
+				// or if the file size is smaller than it was before
+				if currentInfo.Size() == 0 || currentPos > currentInfo.Size() || 
+				   (lastSize > 0 && currentInfo.Size() < lastSize) {
 					if debug {
 						log.Printf("Log file has been truncated: %s", filePath)
 					}
@@ -165,6 +177,9 @@ func followLogFile(filePath string, file *os.File) {
 					file.Seek(0, io.SeekStart)
 					reader = bufio.NewReader(file)
 				}
+				
+				// Update last known size
+				lastSize = currentInfo.Size()
 				
 				// Wait a bit before trying again
 				time.Sleep(1 * time.Second)
@@ -194,19 +209,27 @@ func processLogEntry(line, filePath string) {
 		return
 	}
 	
-	if debug {
-		log.Printf("hit on ip %s for %s in %s", ip, reason, filePath)
-	}
+	// Always log rule matches, even when not in verbose mode
+	log.Printf("Rule match: IP=%s, Reason=%s, File=%s", ip, reason, filePath)
 	
 	// Check whitelist
 	if isWhitelisted(ip) {
+		if debug {
+			log.Printf("IP %s is whitelisted, ignoring", ip)
+		}
 		return
 	}
 	
 	if _, blocked := blockedIPs[ip]; blocked {
+		if debug {
+			log.Printf("IP %s is already blocked, ignoring", ip)
+		}
 		return
 	}
 	if _, blocked := blockedSubnets[getSubnet(ip)]; blocked {
+		if debug {
+			log.Printf("Subnet %s is already blocked, ignoring", getSubnet(ip))
+		}
 		return
 	}
 
@@ -252,6 +275,10 @@ func processLogEntry(line, filePath string) {
 
 	// Check if we should block this IP
 	if record.Count >= ruleThreshold {
+		// Always log blocking actions, even when not in verbose mode
+		log.Printf("Blocking IP %s: %d/%d suspicious requests (%s)", 
+			ip, record.Count, ruleThreshold, record.Reason)
+		
 		blockIP(ip, filePath, reason)
 		
 		// Check if we should block the subnet
@@ -263,9 +290,16 @@ func processLogEntry(line, filePath string) {
 			mu.Unlock()
 			
 			if count >= subnetThreshold {
+				// Always log subnet blocking actions, even when not in verbose mode
+				log.Printf("Blocking subnet %s: %d/%d IPs with suspicious activity", 
+					subnet, count, subnetThreshold)
+				
 				blockSubnet(subnet)
 			}
 		}
+	} else if debug {
+		log.Printf("IP %s has %d/%d suspicious requests (%s)", 
+			ip, record.Count, ruleThreshold, record.Reason)
 	}
 }
 
