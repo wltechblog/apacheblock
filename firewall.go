@@ -1,0 +1,205 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"os/exec"
+	"strings"
+)
+
+// setupFirewallTable creates our custom iptables table and chain if they don't exist
+// and sets up the necessary rules to use it for incoming connections
+func setupFirewallTable() error {
+	// Check if our table exists
+	cmd := exec.Command("iptables-save", "-t", firewallTable)
+	if err := cmd.Run(); err != nil {
+		// Table doesn't exist, create it
+		log.Printf("Creating custom iptables table: %s", firewallTable)
+		
+		// Create the table and chain in /etc/iptables/rules.v4
+		cmds := [][]string{
+			// Create the table and chain
+			{"iptables", "-t", "filter", "-N", firewallTable},
+			// Set default policy to RETURN (continue processing)
+			{"iptables", "-t", "filter", "-A", firewallTable, "-j", "RETURN"},
+			// Insert our chain at the beginning of the INPUT chain
+			{"iptables", "-t", "filter", "-I", "INPUT", "1", "-j", firewallTable},
+		}
+		
+		for _, cmdArgs := range cmds {
+			cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("failed to run %v: %v", cmdArgs, err)
+			}
+		}
+		
+		log.Printf("Successfully created and configured iptables table: %s", firewallTable)
+	} else {
+		log.Printf("Using existing iptables table: %s", firewallTable)
+	}
+	
+	return nil
+}
+
+// flushFirewallTable removes all rules from our custom iptables chain
+func flushFirewallTable() error {
+	cmd := exec.Command("iptables", "-t", "filter", "-F", firewallTable)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to flush iptables chain %s: %v", firewallTable, err)
+	}
+	
+	// Re-add the default RETURN rule at the end
+	cmd = exec.Command("iptables", "-t", "filter", "-A", firewallTable, "-j", "RETURN")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to add default RETURN rule: %v", err)
+	}
+	
+	log.Printf("Flushed iptables chain: %s", firewallTable)
+	return nil
+}
+
+// addBlockRule adds a block rule for an IP or subnet to our custom chain
+func addBlockRule(target string) error {
+	cmd := exec.Command("iptables", "-t", "filter", "-I", firewallTable, "1", "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to block %s on port 80: %v", target, err)
+	}
+	
+	cmd = exec.Command("iptables", "-t", "filter", "-I", firewallTable, "1", "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to block %s on port 443: %v", target, err)
+	}
+	
+	return nil
+}
+
+// removeBlockRule removes a block rule for an IP or subnet from our custom chain
+func removeBlockRule(target string) error {
+	// Remove the rule for port 80
+	cmd := exec.Command("iptables", "-t", "filter", "-D", firewallTable, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to unblock %s on port 80: %v", target, err)
+	}
+	
+	// Remove the rule for port 443
+	cmd = exec.Command("iptables", "-t", "filter", "-D", firewallTable, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to unblock %s on port 443: %v", target, err)
+	}
+	
+	return nil
+}
+
+// removePortBlockingRules removes all rules in our custom chain
+func removePortBlockingRules() error {
+	if err := flushFirewallTable(); err != nil {
+		return err
+	}
+	
+	// Clear the blocklist
+	mu.Lock()
+	blockedIPs = make(map[string]struct{})
+	blockedSubnets = make(map[string]struct{})
+	mu.Unlock()
+	
+	// Save the empty blocklist
+	if err := saveBlockList(); err != nil {
+		log.Printf("Warning: Failed to save empty blocklist: %v", err)
+	}
+	
+	log.Println("Successfully removed all port blocking rules.")
+	return nil
+}
+
+// blockIP adds an IP to the blocklist and blocks it in the firewall
+func blockIP(ip, filePath string, rule string) {
+	mu.Lock()
+	defer mu.Unlock()
+	
+	if _, exists := blockedIPs[ip]; exists {
+		return
+	}
+
+	// Add to our blocklist
+	blockedIPs[ip] = struct{}{}
+	
+	// Add the block rule to our custom chain
+	if err := addBlockRule(ip); err != nil {
+		log.Printf("Failed to block IP %s: %v", ip, err)
+		delete(blockedIPs, ip) // Remove from blocklist if we couldn't block it
+		return
+	}
+
+	// Save the updated blocklist
+	if err := saveBlockList(); err != nil {
+		log.Printf("Warning: Failed to save blocklist after blocking IP %s: %v", ip, err)
+	}
+
+	log.Printf("Blocked IP %s from file %s for %s", ip, filePath, rule)
+}
+
+// blockSubnet adds a subnet to the blocklist and blocks it in the firewall
+func blockSubnet(subnet string) {
+	mu.Lock()
+	defer mu.Unlock()
+	
+	if _, exists := blockedSubnets[subnet]; exists {
+		return
+	}
+
+	// Add to our blocklist
+	blockedSubnets[subnet] = struct{}{}
+	
+	// Add the block rule to our custom chain
+	if err := addBlockRule(subnet); err != nil {
+		log.Printf("Failed to block subnet %s: %v", subnet, err)
+		delete(blockedSubnets, subnet) // Remove from blocklist if we couldn't block it
+		return
+	}
+
+	// Remove individual IP rules for this subnet from our custom chain
+	for ip := range blockedIPs {
+		if strings.HasPrefix(ip, strings.TrimSuffix(subnet, ".0/24")) {
+			// Remove from our blocklist
+			delete(blockedIPs, ip)
+			
+			// Remove from the firewall (ignore errors since we're replacing with subnet rule)
+			cmd := exec.Command("iptables", "-t", "filter", "-D", firewallTable, "-s", ip, "-p", "tcp", "--dport", "80", "-j", "DROP")
+			cmd.Run()
+			cmd = exec.Command("iptables", "-t", "filter", "-D", firewallTable, "-s", ip, "-p", "tcp", "--dport", "443", "-j", "DROP")
+			cmd.Run()
+		}
+	}
+
+	// Save the updated blocklist
+	if err := saveBlockList(); err != nil {
+		log.Printf("Warning: Failed to save blocklist after blocking subnet %s: %v", subnet, err)
+	}
+
+	log.Printf("Blocked subnet %s and removed individual IPs", subnet)
+}
+
+// applyBlockList applies the current blocklist to the firewall
+func applyBlockList() error {
+	mu.Lock()
+	defer mu.Unlock()
+	
+	// Apply IP blocks
+	for ip := range blockedIPs {
+		if err := addBlockRule(ip); err != nil {
+			log.Printf("Failed to block IP %s: %v", ip, err)
+		}
+	}
+	
+	// Apply subnet blocks
+	for subnet := range blockedSubnets {
+		if err := addBlockRule(subnet); err != nil {
+			log.Printf("Failed to block subnet %s: %v", subnet, err)
+		}
+	}
+	
+	log.Printf("Applied blocklist to firewall: %d IPs, %d subnets", 
+		len(blockedIPs), len(blockedSubnets))
+	
+	return nil
+}
