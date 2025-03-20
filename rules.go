@@ -106,8 +106,26 @@ func createDefaultRulesFile() error {
 				Enabled:     true,
 			},
 			{
+				Name:        "WordPress PHP Redirects",
+				Description: "Detects requests to PHP files resulting in 301 redirects (common in WordPress)",
+				LogFormat:   "apache",
+				Regex:       `^([\d\.]+) .* "GET .*\.php(?:\s+HTTP/[\d\.]+)?" 301 .*`,
+				Threshold:   3,
+				Duration:    5 * time.Minute,
+				Enabled:     true,
+			},
+			{
 				Name:        "Caddy PHP 403/404",
 				Description: "Detects requests to PHP files resulting in 403 or 404 status codes in Caddy logs",
+				LogFormat:   "caddy",
+				Regex:       `.*\.php.*`,
+				Threshold:   3,
+				Duration:    5 * time.Minute,
+				Enabled:     true,
+			},
+			{
+				Name:        "Caddy PHP Redirects",
+				Description: "Detects requests to PHP files resulting in 301 redirects in Caddy logs",
 				LogFormat:   "caddy",
 				Regex:       `.*\.php.*`,
 				Threshold:   3,
@@ -129,15 +147,6 @@ func createDefaultRulesFile() error {
 				LogFormat:   "all",
 				Regex:       `^([\d\.]+) .* "GET .*(?:union\s+select|select\s*\*|drop\s+table|--\s|;\s*--\s|'|%27).*" .*`,
 				Threshold:   2,
-				Duration:    5 * time.Minute,
-				Enabled:     true,
-			},
-			{
-				Name:        "WordPress File Probing",
-				Description: "Detects attempts to access common WordPress files that don't exist",
-				LogFormat:   "apache",
-				Regex:       `^([\d\.]+) .* "GET .*(?:wp-includes|wp-content|wp-admin).*" (403|404) .*`,
-				Threshold:   3,
 				Duration:    5 * time.Minute,
 				Enabled:     true,
 			},
@@ -222,7 +231,8 @@ func matchRule(line string, format string) (string, string, bool) {
 				var entry CaddyLogEntry
 				if err := json.Unmarshal([]byte(line), &entry); err == nil {
 					// Check if the URI matches our rule (already confirmed by regex)
-					if (entry.Status == 403 || entry.Status == 404) && 
+					// Include 301 status code for redirect detection
+					if (entry.Status == 403 || entry.Status == 404 || entry.Status == 301) && 
 					   entry.Request.ClientIP != "" {
 						reason := rule.Name + " " + fmt.Sprint(entry.Status)
 						
