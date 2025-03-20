@@ -1,13 +1,23 @@
 package main
 
 import (
+	"os"
 	"sync"
 	"time"
 )
 
+// FileState tracks the state of a file being monitored
+type FileState struct {
+	File     *os.File
+	Position int64
+	Size     int64
+	LastMod  time.Time
+}
+
 // Global variables
 var (
 	mu                sync.Mutex
+	stateMutex        sync.Mutex
 	whitelist         = map[string]bool{}
 	fileSuffix        = "access.log" // Log file suffix
 	debug             = false
@@ -16,6 +26,7 @@ var (
 	blockedIPs        = make(map[string]struct{})
 	blockedSubnets    = make(map[string]struct{})
 	subnetAccessCount = make(map[string]int)
+	fileStates        = make(map[string]*FileState)
 	logFormat         string
 	logpath           string
 	whitelistFilePath = "/etc/apacheblock/whitelist.txt" // Default path for whitelist file
