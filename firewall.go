@@ -90,17 +90,46 @@ func flushFirewallTable() error {
 }
 
 // addBlockRule adds a block rule for an IP or subnet to our custom chain
+// This improved version checks if the rule already exists before adding it
 func addBlockRule(target string) error {
-	cmd := exec.Command("iptables", "-t", "filter", "-I", firewallTable, "1", "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to block %s on port 80: %v", target, err)
+	// Check if the rule for port 80 already exists
+	cmd := exec.Command("iptables", "-t", "filter", "-C", firewallTable, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
+	port80Exists := cmd.Run() == nil
+
+	// Check if the rule for port 443 already exists
+	cmd = exec.Command("iptables", "-t", "filter", "-C", firewallTable, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
+	port443Exists := cmd.Run() == nil
+
+	// If both rules already exist, we're done
+	if port80Exists && port443Exists {
+		if debug {
+			log.Printf("Block rules for %s already exist in iptables", target)
+		}
+		return nil
 	}
-	
-	cmd = exec.Command("iptables", "-t", "filter", "-I", firewallTable, "1", "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to block %s on port 443: %v", target, err)
+
+	// Add the rule for port 80 if it doesn't exist
+	if !port80Exists {
+		cmd = exec.Command("iptables", "-t", "filter", "-I", firewallTable, "1", "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to block %s on port 80: %v", target, err)
+		}
+		if debug {
+			log.Printf("Added block rule for %s on port 80", target)
+		}
 	}
-	
+
+	// Add the rule for port 443 if it doesn't exist
+	if !port443Exists {
+		cmd = exec.Command("iptables", "-t", "filter", "-I", firewallTable, "1", "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to block %s on port 443: %v", target, err)
+		}
+		if debug {
+			log.Printf("Added block rule for %s on port 443", target)
+		}
+	}
+
 	return nil
 }
 
@@ -165,51 +194,50 @@ func blockIP(ip, filePath string, rule string) {
 	}
 	mu.Unlock()
 	
+	// If the IP is already blocked, we don't need to do anything else
 	if alreadyBlocked {
 		if debug {
-			log.Printf("IP %s is already in the blocklist, ensuring firewall rule exists", ip)
+			log.Printf("IP %s is already in the blocklist, skipping", ip)
 		}
+		return
 	}
 	
-	// Always add the block rule to our custom chain to ensure it exists
+	// Add the block rule to our custom chain
 	if err := addBlockRule(ip); err != nil {
 		log.Printf("Failed to block IP %s: %v", ip, err)
-		if !alreadyBlocked {
-			mu.Lock()
-			delete(blockedIPs, ip) // Remove from blocklist if we couldn't block it and it wasn't already there
-			mu.Unlock()
-		}
+		mu.Lock()
+		delete(blockedIPs, ip) // Remove from blocklist if we couldn't block it
+		mu.Unlock()
 		return
 	}
 
 	// Save the updated blocklist - don't hold the mutex while doing this
 	if err := saveBlockList(); err != nil {
 		log.Printf("Warning: Failed to save blocklist after blocking IP %s: %v", ip, err)
-		// Log more details about the error
-		log.Printf("Error details: %v", err)
-		// Try to check if the directory exists and is writable
-		dir := filepath.Dir(blocklistFilePath)
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			log.Printf("Directory %s does not exist", dir)
-		} else {
-			// Try to create a test file to check permissions
-			testFile := filepath.Join(dir, "test.txt")
-			if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-				log.Printf("Cannot write to directory %s: %v", dir, err)
+		// Log more details about the error in debug mode
+		if debug {
+			log.Printf("Error details: %v", err)
+			// Try to check if the directory exists and is writable
+			dir := filepath.Dir(blocklistFilePath)
+			if _, err := os.Stat(dir); os.IsNotExist(err) {
+				log.Printf("Directory %s does not exist", dir)
 			} else {
-				os.Remove(testFile) // Clean up
-				log.Printf("Directory %s is writable", dir)
+				// Try to create a test file to check permissions
+				testFile := filepath.Join(dir, "test.txt")
+				if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+					log.Printf("Cannot write to directory %s: %v", dir, err)
+				} else {
+					os.Remove(testFile) // Clean up
+					log.Printf("Directory %s is writable", dir)
+				}
 			}
 		}
-	} else {
+	} else if debug {
 		log.Printf("Successfully saved blocklist to %s", blocklistFilePath)
 	}
 
-	if alreadyBlocked {
-		log.Printf("Ensured firewall rule exists for IP %s from file %s for %s", ip, filePath, rule)
-	} else {
-		log.Printf("Blocked IP %s from file %s for %s", ip, filePath, rule)
-	}
+	// Log the blocking action
+	log.Printf("Blocked IP %s from file %s for %s", ip, filePath, rule)
 }
 
 // blockSubnet adds a subnet to the blocklist and blocks it in the firewall
@@ -236,25 +264,25 @@ func blockSubnet(subnet string) {
 	}
 	mu.Unlock()
 	
+	// If the subnet is already blocked, we don't need to do anything else
 	if alreadyBlocked {
 		if debug {
-			log.Printf("Subnet %s is already in the blocklist, ensuring firewall rule exists", subnet)
+			log.Printf("Subnet %s is already in the blocklist, skipping", subnet)
 		}
+		return
 	}
 	
-	// Always add the block rule to our custom chain to ensure it exists
+	// Add the block rule to our custom chain
 	if err := addBlockRule(subnet); err != nil {
 		log.Printf("Failed to block subnet %s: %v", subnet, err)
-		if !alreadyBlocked {
-			mu.Lock()
-			delete(blockedSubnets, subnet) // Remove from blocklist if we couldn't block it and it wasn't already there
-			mu.Unlock()
-		}
+		mu.Lock()
+		delete(blockedSubnets, subnet) // Remove from blocklist if we couldn't block it
+		mu.Unlock()
 		return
 	}
 
 	// If this is a new subnet block, remove individual IP rules for this subnet
-	if !alreadyBlocked && len(ipsToRemove) > 0 {
+	if len(ipsToRemove) > 0 {
 		mu.Lock()
 		// Remove IPs from our blocklist
 		for _, ip := range ipsToRemove {
@@ -264,41 +292,37 @@ func blockSubnet(subnet string) {
 		
 		// Remove from the firewall (ignore errors since we're replacing with subnet rule)
 		for _, ip := range ipsToRemove {
-			cmd := exec.Command("iptables", "-t", "filter", "-D", firewallTable, "-s", ip, "-p", "tcp", "--dport", "80", "-j", "DROP")
-			cmd.Run()
-			cmd = exec.Command("iptables", "-t", "filter", "-D", firewallTable, "-s", ip, "-p", "tcp", "--dport", "443", "-j", "DROP")
-			cmd.Run()
+			removeBlockRule(ip)
 		}
 	}
 
 	// Save the updated blocklist - don't hold the mutex while doing this
 	if err := saveBlockList(); err != nil {
 		log.Printf("Warning: Failed to save blocklist after blocking subnet %s: %v", subnet, err)
-		// Log more details about the error
-		log.Printf("Error details: %v", err)
-		// Try to check if the directory exists and is writable
-		dir := filepath.Dir(blocklistFilePath)
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			log.Printf("Directory %s does not exist", dir)
-		} else {
-			// Try to create a test file to check permissions
-			testFile := filepath.Join(dir, "test.txt")
-			if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-				log.Printf("Cannot write to directory %s: %v", dir, err)
+		// Log more details about the error in debug mode
+		if debug {
+			log.Printf("Error details: %v", err)
+			// Try to check if the directory exists and is writable
+			dir := filepath.Dir(blocklistFilePath)
+			if _, err := os.Stat(dir); os.IsNotExist(err) {
+				log.Printf("Directory %s does not exist", dir)
 			} else {
-				os.Remove(testFile) // Clean up
-				log.Printf("Directory %s is writable", dir)
+				// Try to create a test file to check permissions
+				testFile := filepath.Join(dir, "test.txt")
+				if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+					log.Printf("Cannot write to directory %s: %v", dir, err)
+				} else {
+					os.Remove(testFile) // Clean up
+					log.Printf("Directory %s is writable", dir)
+				}
 			}
 		}
-	} else {
+	} else if debug {
 		log.Printf("Successfully saved blocklist to %s", blocklistFilePath)
 	}
 
-	if alreadyBlocked {
-		log.Printf("Ensured firewall rule exists for subnet %s", subnet)
-	} else {
-		log.Printf("Blocked subnet %s and removed %d individual IPs", subnet, len(ipsToRemove))
-	}
+	// Log the blocking action
+	log.Printf("Blocked subnet %s and removed %d individual IPs", subnet, len(ipsToRemove))
 }
 
 // applyBlockList applies the current blocklist to the firewall

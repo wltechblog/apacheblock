@@ -172,10 +172,12 @@ func handleLogFile(filePath string) {
 
 	// Create a new file state
 	newState := &FileState{
-		File:     file,
-		Size:     fileInfo.Size(),
-		LastMod:  fileInfo.ModTime(),
-		Position: 0,
+		File:            file,
+		Size:            fileInfo.Size(),
+		LastMod:         fileInfo.ModTime(),
+		Position:        0,
+		LastTimestamp:   time.Time{},
+		LastProcessedIP: "",
 	}
 	fileStates[filePath] = newState
 
@@ -256,7 +258,7 @@ func processLogFile(filePath string, state *FileState) {
 		if verbose {
 			log.Printf("Processing log line from %s: %s", filePath, trimmedLine)
 		}
-		processLogEntry(trimmedLine, filePath)
+		processLogEntry(trimmedLine, filePath, state)
 		
 		// Update position
 		pos, err := state.File.Seek(0, io.SeekCurrent)
@@ -312,7 +314,7 @@ func readNewContent(filePath string, state *FileState) {
 		if verbose {
 			log.Printf("Processing new log line from %s: %s", filePath, trimmedLine)
 		}
-		processLogEntry(trimmedLine, filePath)
+		processLogEntry(trimmedLine, filePath, state)
 		
 		// Update position
 		pos, err := state.File.Seek(0, io.SeekCurrent)
@@ -454,144 +456,4 @@ func startPeriodicTasks(watcher *fsnotify.Watcher) {
 			}
 		}
 	}()
-}
-
-// processLogEntry analyzes a log entry for suspicious activity
-func processLogEntry(line, filePath string) {
-	// Use the rules system to match the log entry
-	ip, reason, matched := matchRule(line, logFormat)
-	
-	if !matched {
-		return
-	}
-	
-	// Always log rule matches, even when not in verbose mode
-	log.Printf("Rule match: IP=%s, Reason=%s, File=%s", ip, reason, filePath)
-	
-	// Check whitelist
-	if isWhitelisted(ip) {
-		if debug {
-			log.Printf("IP %s is whitelisted, ignoring", ip)
-		}
-		return
-	}
-	
-	// Check if IP or subnet is already blocked, but don't return early
-	// This allows us to continue counting hits for subnet blocking
-	ipBlocked := false
-	subnetBlocked := false
-	subnet := getSubnet(ip)
-	
-	mu.Lock()
-	if _, blocked := blockedIPs[ip]; blocked {
-		ipBlocked = true
-	}
-	
-	if _, blocked := blockedSubnets[subnet]; blocked {
-		subnetBlocked = true
-	}
-	mu.Unlock()
-	
-	if ipBlocked {
-		if debug {
-			log.Printf("IP %s is already blocked, continuing to count for subnet analysis", ip)
-		}
-	}
-	
-	if subnetBlocked {
-		if debug {
-			log.Printf("Subnet %s is already blocked, continuing to count for metrics", subnet)
-		}
-	}
-	
-	// If both IP and subnet are already blocked, we can skip further processing
-	if ipBlocked && subnetBlocked {
-		if debug {
-			log.Printf("Both IP %s and subnet %s are already blocked, skipping further processing", ip, subnet)
-		}
-		return
-	}
-
-	// Get the threshold and duration for this rule
-	ruleThreshold, ruleDuration := getRuleThreshold(reason)
-
-	mu.Lock()
-	record, exists := ipAccessLog[ip]
-	now := time.Now()
-	if !exists {
-		record = &AccessRecord{
-			Count:       1,
-			ExpiresAt:   now.Add(ruleDuration),
-			LastUpdated: now,
-			Reason:      reason,
-		}
-		ipAccessLog[ip] = record
-	} else {
-		// If this is a hit for the same rule, update the count
-		if record.Reason == reason {
-			record.Count++
-			record.LastUpdated = now
-			// If it's been a while since the last update, extend the expiration
-			if now.Sub(record.LastUpdated) > time.Minute {
-				record.ExpiresAt = now.Add(ruleDuration)
-			}
-		} else {
-			// This is a hit for a different rule, create a new record
-			// but keep the higher count between the two
-			oldCount := record.Count
-			record.Count = 1
-			record.Reason = reason
-			record.LastUpdated = now
-			record.ExpiresAt = now.Add(ruleDuration)
-			
-			// If the old count was higher, keep it
-			if oldCount > record.Count {
-				record.Count = oldCount
-			}
-		}
-	}
-	mu.Unlock()
-
-	// Check if we should block this IP
-	if record.Count >= ruleThreshold {
-		// Always log blocking actions, even when not in verbose mode
-		log.Printf("Blocking IP %s: %d/%d suspicious requests (%s)",
-			ip, record.Count, ruleThreshold, record.Reason)
-		
-		// Only block the IP if it's not already blocked
-		if !ipBlocked {
-			blockIP(ip, filePath, reason)
-		} else {
-			log.Printf("IP %s is already blocked, ensuring firewall rule exists", ip)
-			// Ensure the firewall rule exists - don't lock the mutex here
-			if err := addBlockRule(ip); err != nil {
-				log.Printf("Failed to ensure block rule for IP %s: %v", ip, err)
-			}
-		}
-		
-		// We already have the subnet variable from earlier
-		if subnet != "" && !subnetBlocked {
-			// Update subnet access count
-			var count int
-			mu.Lock()
-			subnetAccessCount[subnet]++
-			count = subnetAccessCount[subnet]
-			mu.Unlock()
-			
-			log.Printf("Subnet %s has %d/%d IPs with suspicious activity",
-				subnet, count, subnetThreshold)
-			
-			if count >= subnetThreshold {
-				// Always log subnet blocking actions, even when not in verbose mode
-				log.Printf("Blocking subnet %s: %d/%d IPs with suspicious activity",
-					subnet, count, subnetThreshold)
-				
-				// Don't hold the mutex while calling blockSubnet
-				blockSubnet(subnet)
-			}
-		}
-	} else if debug {
-		log.Printf("IP %s has %d/%d suspicious requests (%s)",
-			ip, record.Count, ruleThreshold, record.Reason)
-	}
 }
