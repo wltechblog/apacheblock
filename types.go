@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"sync"
 	"time"
 )
@@ -17,7 +16,6 @@ var (
 	blockedIPs        = make(map[string]struct{})
 	blockedSubnets    = make(map[string]struct{})
 	subnetAccessCount = make(map[string]int)
-	activeFiles       = make(map[string]*os.File)
 	logFormat         string
 	logpath           string
 	whitelistFilePath = "/etc/apacheblock/whitelist.txt" // Default path for whitelist file
