@@ -10,15 +10,15 @@ import (
 // setupFirewallTable creates our custom iptables table and chain if they don't exist
 // and sets up the necessary rules to use it for incoming connections
 func setupFirewallTable() error {
-	// Check if our table exists
-	cmd := exec.Command("iptables-save", "-t", firewallTable)
+	// Check if our chain exists
+	cmd := exec.Command("iptables", "-t", "filter", "-L", firewallTable)
 	if err := cmd.Run(); err != nil {
-		// Table doesn't exist, create it
-		log.Printf("Creating custom iptables table: %s", firewallTable)
+		// Chain doesn't exist, create it
+		log.Printf("Creating custom iptables chain: %s", firewallTable)
 		
-		// Create the table and chain in /etc/iptables/rules.v4
+		// Create the chain and set up rules
 		cmds := [][]string{
-			// Create the table and chain
+			// Create the chain
 			{"iptables", "-t", "filter", "-N", firewallTable},
 			// Set default policy to RETURN (continue processing)
 			{"iptables", "-t", "filter", "-A", firewallTable, "-j", "RETURN"},
@@ -33,9 +33,25 @@ func setupFirewallTable() error {
 			}
 		}
 		
-		log.Printf("Successfully created and configured iptables table: %s", firewallTable)
+		log.Printf("Successfully created and configured iptables chain: %s", firewallTable)
 	} else {
-		log.Printf("Using existing iptables table: %s", firewallTable)
+		// Chain exists, check if it's in the INPUT chain
+		cmd = exec.Command("iptables", "-t", "filter", "-C", "INPUT", "-j", firewallTable)
+		if err := cmd.Run(); err != nil {
+			// Chain exists but not in INPUT chain, add it
+			log.Printf("Adding existing chain %s to INPUT chain", firewallTable)
+			cmd = exec.Command("iptables", "-t", "filter", "-I", "INPUT", "1", "-j", firewallTable)
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("failed to add chain to INPUT: %v", err)
+			}
+		}
+		
+		// Flush the chain to start fresh
+		if err := flushFirewallTable(); err != nil {
+			return fmt.Errorf("failed to flush existing chain: %v", err)
+		}
+		
+		log.Printf("Using existing iptables chain: %s (flushed)", firewallTable)
 	}
 	
 	return nil
@@ -92,8 +108,17 @@ func removeBlockRule(target string) error {
 
 // removePortBlockingRules removes all rules in our custom chain
 func removePortBlockingRules() error {
-	if err := flushFirewallTable(); err != nil {
-		return err
+	// Check if our chain exists
+	cmd := exec.Command("iptables", "-t", "filter", "-L", firewallTable)
+	if err := cmd.Run(); err != nil {
+		// Chain doesn't exist, nothing to do
+		log.Printf("Chain %s doesn't exist, nothing to remove", firewallTable)
+	} else {
+		// Chain exists, flush it
+		if err := flushFirewallTable(); err != nil {
+			log.Printf("Warning: Failed to flush iptables chain: %v", err)
+			// Continue anyway
+		}
 	}
 	
 	// Clear the blocklist

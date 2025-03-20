@@ -138,11 +138,6 @@ func main() {
 		os.Exit(0)
 	}
 	
-	// Flush the firewall table first
-	if err := flushFirewallTable(); err != nil {
-		log.Fatalf("Error flushing firewall table: %v", err)
-	}
-	
 	// Apply the blocklist to the firewall
 	if err := applyBlockList(); err != nil {
 		log.Printf("Warning: Failed to apply blocklist: %v", err)
