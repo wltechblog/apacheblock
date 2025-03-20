@@ -57,6 +57,93 @@ func main() {
 	rulesFilePath = *rulesPath
 	firewallTable = *tableName
 	
+	// Check if we're in client mode
+	clientMode := *block != "" || *unblock != "" || *check != "" || *list
+	
+	if clientMode {
+		// Client mode - perform the requested operation and exit
+		var err error
+		
+		// Try to send the command to a running server first
+		if *check != "" {
+			// For check command, try socket first
+			err = sendCommand(CheckCommand, *check)
+			if err == nil {
+				// Command was successfully sent to the server
+				os.Exit(0)
+			}
+			
+			// If socket failed, just load the blocklist and check (no firewall setup needed)
+			log.Printf("Could not connect to server: %v", err)
+			log.Printf("Checking blocklist file directly")
+			
+			// Just load the blocklist
+			if err := loadBlockList(); err != nil {
+				log.Printf("Warning: Failed to load blocklist: %v", err)
+			}
+			
+			// Check if the IP is blocked
+			if err := clientCheckIP(*check); err != nil {
+				log.Fatalf("Error checking IP: %v", err)
+			}
+			
+			os.Exit(0)
+		} else if *list {
+			// For list command, try socket first
+			err = sendCommand(ListCommand, "")
+			if err == nil {
+				// Command was successfully sent to the server
+				os.Exit(0)
+			}
+			
+			// If socket failed, just load the blocklist and list (no firewall setup needed)
+			log.Printf("Could not connect to server: %v", err)
+			log.Printf("Listing from blocklist file directly")
+			
+			// Just load the blocklist
+			if err := loadBlockList(); err != nil {
+				log.Printf("Warning: Failed to load blocklist: %v", err)
+			}
+			
+			// List blocked IPs and subnets
+			if err := clientListBlocked(); err != nil {
+				log.Fatalf("Error listing blocked IPs: %v", err)
+			}
+			
+			os.Exit(0)
+		} else {
+			// For block/unblock commands, we need the full setup
+			// Setup our custom firewall table
+			if err := setupFirewallTable(); err != nil {
+				log.Fatalf("Error setting up firewall table: %v", err)
+			}
+			
+			// Load the blocklist from file
+			if err := loadBlockList(); err != nil {
+				log.Printf("Warning: Failed to load blocklist: %v", err)
+			}
+			
+			// Load the rules from file
+			if err := loadRules(); err != nil {
+				log.Printf("Warning: Failed to load rules: %v", err)
+			}
+			
+			if *block != "" {
+				err = RunClientMode(BlockCommand, *block)
+			} else if *unblock != "" {
+				err = RunClientMode(UnblockCommand, *unblock)
+			}
+			
+			if err != nil {
+				log.Fatalf("Error in client mode: %v", err)
+			}
+		}
+		
+		os.Exit(0)
+	}
+	
+	// Server mode - continue with normal operation
+	
 	// Setup our custom firewall table
 	if err := setupFirewallTable(); err != nil {
 		log.Fatalf("Error setting up firewall table: %v", err)
@@ -71,32 +158,6 @@ func main() {
 	if err := loadRules(); err != nil {
 		log.Printf("Warning: Failed to load rules: %v", err)
 	}
-	
-	// Check if we're in client mode
-	clientMode := *block != "" || *unblock != "" || *check != "" || *list
-	
-	if clientMode {
-		// Client mode - perform the requested operation and exit
-		var err error
-		
-		if *block != "" {
-			err = RunClientMode(BlockCommand, *block)
-		} else if *unblock != "" {
-			err = RunClientMode(UnblockCommand, *unblock)
-		} else if *check != "" {
-			err = RunClientMode(CheckCommand, *check)
-		} else if *list {
-			err = RunClientMode(ListCommand, "")
-		}
-		
-		if err != nil {
-			log.Fatalf("Error in client mode: %v", err)
-		}
-		
-		os.Exit(0)
-	}
-	
-	// Server mode - continue with normal operation
 	
 	if *server == "apache" || *server == "caddy" {
 		logFormat = *server
