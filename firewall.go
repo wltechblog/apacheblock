@@ -59,12 +59,12 @@ func setupFirewallTable() error {
 		log.Printf("Successfully created and configured iptables chain: %s", firewallTable)
 	} else {
 		// Chain exists, check if it's in the INPUT chain
-		cmd = exec.Command("iptables", "-t", "filter", "-C", "INPUT", "-j", firewallTable)
+		cmd = exec.Command("iptables", "-w", "-t", "filter", "-C", "INPUT", "-j", firewallTable)
 		output, err = cmd.CombinedOutput()
 		if err != nil {
 			// Chain exists but not in INPUT chain, add it
 			log.Printf("Adding existing chain %s to INPUT chain", firewallTable)
-			cmd = exec.Command("iptables", "-t", "filter", "-I", "INPUT", "1", "-j", firewallTable)
+			cmd = exec.Command("iptables", "-w", "-t", "filter", "-I", "INPUT", "1", "-j", firewallTable)
 			output, err = cmd.CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("failed to add chain to INPUT: %v, output: %s", err, string(output))
@@ -82,11 +82,11 @@ func setupFirewallTable() error {
 	}
 	
 	// Double-check that our chain is properly connected to the INPUT chain
-	cmd = exec.Command("iptables", "-t", "filter", "-C", "INPUT", "-j", firewallTable)
+	cmd = exec.Command("iptables", "-w", "-t", "filter", "-C", "INPUT", "-j", firewallTable)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("Warning: Chain %s is not properly connected to INPUT chain, attempting to connect", firewallTable)
-		cmd = exec.Command("iptables", "-t", "filter", "-I", "INPUT", "1", "-j", firewallTable)
+		cmd = exec.Command("iptables", "-w", "-t", "filter", "-I", "INPUT", "1", "-j", firewallTable)
 		output, err = cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("failed to connect chain to INPUT: %v, output: %s", err, string(output))
@@ -105,7 +105,7 @@ func flushFirewallTable() error {
 	}
 
 	// Check if our chain exists before trying to flush it
-	chainCheckCmd := exec.Command("iptables", "-t", "filter", "-L", firewallTable, "-n")
+	chainCheckCmd := exec.Command("iptables", "-w", "-t", "filter", "-L", firewallTable, "-n")
 	if err := chainCheckCmd.Run(); err != nil {
 		// Chain doesn't exist, nothing to flush
 		log.Printf("Chain %s doesn't exist, nothing to flush", firewallTable)
@@ -113,19 +113,19 @@ func flushFirewallTable() error {
 	}
 
 	// Flush the chain
-	cmd := exec.Command("iptables", "-t", "filter", "-F", firewallTable)
+	cmd := exec.Command("iptables", "-w", "-t", "filter", "-F", firewallTable)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to flush iptables chain %s: %v, output: %s", firewallTable, err, string(output))
 	}
 	
 	// Re-add the default RETURN rule at the end
-	cmd = exec.Command("iptables", "-t", "filter", "-A", firewallTable, "-j", "RETURN")
+	cmd = exec.Command("iptables", "-w", "-t", "filter", "-A", firewallTable, "-j", "RETURN")
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("Warning: Failed to add default RETURN rule: %v, output: %s", err, string(output))
 		// Try an alternative approach
-		cmd = exec.Command("iptables", "-t", "filter", "-I", firewallTable, "-j", "RETURN")
+		cmd = exec.Command("iptables", "-w", "-t", "filter", "-I", firewallTable, "-j", "RETURN")
 		output, err = cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("failed to add default RETURN rule (alternative method): %v, output: %s", err, string(output))
@@ -146,7 +146,7 @@ func addBlockRule(target string) error {
 	}
 
 	// Check if our chain exists before trying to add rules
-	chainCheckCmd := exec.Command("iptables", "-t", "filter", "-L", firewallTable, "-n")
+	chainCheckCmd := exec.Command("iptables", "-w", "-t", "filter", "-L", firewallTable, "-n")
 	if err := chainCheckCmd.Run(); err != nil {
 		// Try to create the chain if it doesn't exist
 		if err := setupFirewallTable(); err != nil {
@@ -155,7 +155,7 @@ func addBlockRule(target string) error {
 	}
 
 	// Check if the rule for port 80 already exists (use -n to disable DNS lookups)
-	cmd := exec.Command("iptables", "-t", "filter", "-C", firewallTable, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
+	cmd := exec.Command("iptables", "-w", "-t", "filter", "-C", firewallTable, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
 	output, err := cmd.CombinedOutput()
 	port80Exists := err == nil
 	
@@ -164,7 +164,7 @@ func addBlockRule(target string) error {
 	}
 
 	// Check if the rule for port 443 already exists (use -n to disable DNS lookups)
-	cmd = exec.Command("iptables", "-t", "filter", "-C", firewallTable, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
+	cmd = exec.Command("iptables", "-w", "-t", "filter", "-C", firewallTable, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
 	output, err = cmd.CombinedOutput()
 	port443Exists := err == nil
 	
@@ -183,14 +183,14 @@ func addBlockRule(target string) error {
 	// Add the rule for port 80 if it doesn't exist
 	if !port80Exists {
 		// Try the standard approach first
-		cmd = exec.Command("iptables", "-t", "filter", "-I", firewallTable, "1", "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
+		cmd = exec.Command("iptables", "-w", "-t", "filter", "-I", firewallTable, "1", "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
 		output, err := cmd.CombinedOutput()
 		
 		if err != nil {
 			log.Printf("First attempt to block %s on port 80 failed: %v, output: %s", target, err, string(output))
 			
 			// Try alternative approach with append instead of insert
-			cmd = exec.Command("iptables", "-t", "filter", "-A", firewallTable, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
+			cmd = exec.Command("iptables", "-w", "-t", "filter", "-A", firewallTable, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
 			output, err = cmd.CombinedOutput()
 			
 			if err != nil {
@@ -206,14 +206,14 @@ func addBlockRule(target string) error {
 	// Add the rule for port 443 if it doesn't exist
 	if !port443Exists {
 		// Try the standard approach first
-		cmd = exec.Command("iptables", "-t", "filter", "-I", firewallTable, "1", "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
+		cmd = exec.Command("iptables", "-w", "-t", "filter", "-I", firewallTable, "1", "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
 		output, err := cmd.CombinedOutput()
 		
 		if err != nil {
 			log.Printf("First attempt to block %s on port 443 failed: %v, output: %s", target, err, string(output))
 			
 			// Try alternative approach with append instead of insert
-			cmd = exec.Command("iptables", "-t", "filter", "-A", firewallTable, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
+			cmd = exec.Command("iptables", "-w", "-t", "filter", "-A", firewallTable, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
 			output, err = cmd.CombinedOutput()
 			
 			if err != nil {
@@ -237,7 +237,7 @@ func removeBlockRule(target string) error {
 	}
 
 	// Check if our chain exists before trying to remove rules
-	chainCheckCmd := exec.Command("iptables", "-t", "filter", "-L", firewallTable, "-n")
+	chainCheckCmd := exec.Command("iptables", "-w", "-t", "filter", "-L", firewallTable, "-n")
 	if err := chainCheckCmd.Run(); err != nil {
 		// Chain doesn't exist, nothing to remove
 		if debug {
@@ -247,12 +247,12 @@ func removeBlockRule(target string) error {
 	}
 
 	// Check if the rule for port 80 exists before trying to remove it
-	checkCmd := exec.Command("iptables", "-t", "filter", "-C", firewallTable, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
+	checkCmd := exec.Command("iptables", "-w", "-t", "filter", "-C", firewallTable, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
 	port80Exists := checkCmd.Run() == nil
 
 	// Remove the rule for port 80 if it exists
 	if port80Exists {
-		cmd := exec.Command("iptables", "-t", "filter", "-D", firewallTable, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
+		cmd := exec.Command("iptables", "-w", "-t", "filter", "-D", firewallTable, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			log.Printf("Failed to unblock %s on port 80: %v, output: %s", target, err, string(output))
@@ -265,12 +265,12 @@ func removeBlockRule(target string) error {
 	}
 	
 	// Check if the rule for port 443 exists before trying to remove it
-	checkCmd = exec.Command("iptables", "-t", "filter", "-C", firewallTable, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
+	checkCmd = exec.Command("iptables", "-w", "-t", "filter", "-C", firewallTable, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
 	port443Exists := checkCmd.Run() == nil
 
 	// Remove the rule for port 443 if it exists
 	if port443Exists {
-		cmd := exec.Command("iptables", "-t", "filter", "-D", firewallTable, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
+		cmd := exec.Command("iptables", "-w", "-t", "filter", "-D", firewallTable, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			log.Printf("Failed to unblock %s on port 443: %v, output: %s", target, err, string(output))
@@ -288,7 +288,7 @@ func removeBlockRule(target string) error {
 // removePortBlockingRules removes all rules in our custom chain
 func removePortBlockingRules() error {
 	// Check if our chain exists (use -n to disable DNS lookups)
-	cmd := exec.Command("iptables", "-t", "filter", "-L", firewallTable, "-n")
+	cmd := exec.Command("iptables", "-w", "-t", "filter", "-L", firewallTable, "-n")
 	if err := cmd.Run(); err != nil {
 		// Chain doesn't exist, nothing to do
 		log.Printf("Chain %s doesn't exist, nothing to remove", firewallTable)
