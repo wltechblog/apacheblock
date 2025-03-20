@@ -95,7 +95,11 @@ func handleNewOrModifiedLog(filePath string) {
 			existingFile.Close()
 			delete(activeFiles, filePath)
 		} else if os.SameFile(existingFileInfo, fileInfo) {
-			// Same file, already monitoring
+			// Same file, already monitoring - no need to start a new goroutine
+			// But we should check if the file has grown
+			if fileInfo.Size() > existingFileInfo.Size() && debug {
+				log.Printf("File %s has grown, but already being monitored", filePath)
+			}
 			return
 		} else {
 			// Different file with same name (rotated)
@@ -166,10 +170,9 @@ func followLogFile(filePath string, file *os.File) {
 					return
 				}
 				
-				// File is truncated if size is 0 or if our position is beyond the end of file
-				// or if the file size is smaller than it was before
-				if currentInfo.Size() == 0 || currentPos > currentInfo.Size() || 
-				   (lastSize > 0 && currentInfo.Size() < lastSize) {
+				// File is truncated if size is 0 or if the file size is smaller than it was before
+				// We don't consider currentPos > currentInfo.Size() as truncation - that's normal at EOF
+				if currentInfo.Size() == 0 || (lastSize > 0 && currentInfo.Size() < lastSize) {
 					if debug {
 						log.Printf("Log file has been truncated: %s", filePath)
 					}
@@ -357,6 +360,8 @@ func setupLogWatcher() (*fsnotify.Watcher, error) {
 				if !ok {
 					return
 				}
+				
+				// Only log file system events in debug mode to reduce noise
 				if debug {
 					log.Printf("File system event: %s on %s", event.Op.String(), event.Name)
 				}
