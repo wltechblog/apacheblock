@@ -14,6 +14,9 @@ import (
 
 // processExistingLogs finds and processes existing log files
 func processExistingLogs() {
+	// Track which files we've seen in this run
+	seenFiles := make(map[string]bool)
+	
 	// Use logpath instead of hardcoded logDir
 	files, err := filepath.Glob(filepath.Join(logpath, "*"+fileSuffix))
 	if err != nil {
@@ -26,10 +29,24 @@ func processExistingLogs() {
 	}
 
 	for _, file := range files {
+		seenFiles[file] = true
 		if debug {
 			log.Printf("Found log file: %s", file)
 		}
-		handleLogFile(file)
+		
+		// Check if we're already monitoring this file
+		stateMutex.Lock()
+		_, exists := fileStates[file]
+		stateMutex.Unlock()
+		
+		if !exists {
+			if debug {
+				log.Printf("New log file found: %s", file)
+			}
+			handleLogFile(file)
+		} else if debug {
+			log.Printf("Already monitoring log file: %s", file)
+		}
 	}
 	
 	// Also check subdirectories if they exist
@@ -53,13 +70,41 @@ func processExistingLogs() {
 			}
 			
 			for _, file := range subfiles {
+				seenFiles[file] = true
 				if debug {
 					log.Printf("Found log file in subdirectory: %s", file)
 				}
-				handleLogFile(file)
+				
+				// Check if we're already monitoring this file
+				stateMutex.Lock()
+				_, exists := fileStates[file]
+				stateMutex.Unlock()
+				
+				if !exists {
+					if debug {
+						log.Printf("New log file found in subdirectory: %s", file)
+					}
+					handleLogFile(file)
+				} else if debug {
+					log.Printf("Already monitoring log file in subdirectory: %s", file)
+				}
 			}
 		}
 	}
+	
+	// Check for files that have been removed
+	stateMutex.Lock()
+	for file := range fileStates {
+		if !seenFiles[file] {
+			if debug {
+				log.Printf("Log file no longer exists: %s", file)
+			}
+			// Close the file and remove it from our state
+			fileStates[file].File.Close()
+			delete(fileStates, file)
+		}
+	}
+	stateMutex.Unlock()
 }
 
 // handleLogFile processes a log file (new or existing)
@@ -378,12 +423,16 @@ func setupLogWatcher() (*fsnotify.Watcher, error) {
 func startPeriodicTasks(watcher *fsnotify.Watcher) {
 	// Start a periodic check for new log files and directories
 	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
+		// Use a longer interval for checking log files to reduce processing overhead
+		logCheckTicker := time.NewTicker(5 * time.Minute)
+		// Use a shorter interval for saving the blocklist and cleaning up records
+		saveBlocklistTicker := time.NewTicker(1 * time.Minute)
+		defer logCheckTicker.Stop()
+		defer saveBlocklistTicker.Stop()
 		
 		for {
 			select {
-			case <-ticker.C:
+			case <-logCheckTicker.C:
 				if debug {
 					log.Println("Performing periodic check for new log files and directories")
 				}
@@ -391,6 +440,11 @@ func startPeriodicTasks(watcher *fsnotify.Watcher) {
 				checkNewSubdirectories(watcher)
 				// Process existing logs
 				processExistingLogs()
+				
+			case <-saveBlocklistTicker.C:
+				if debug {
+					log.Println("Performing periodic blocklist save and cleanup")
+				}
 				// Periodically save the blocklist to ensure we don't lose any blocks
 				if err := saveBlockList(); err != nil && debug {
 					log.Printf("Warning: Failed to save blocklist during periodic check: %v", err)
