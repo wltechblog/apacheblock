@@ -29,7 +29,7 @@ func setupFirewallTable() error {
 	}
 
 	// Check if our chain exists (use -n to disable DNS lookups)
-	cmd := exec.Command("iptables", "-t", "filter", "-L", firewallTable, "-n")
+	cmd := exec.Command("iptables", "-w", "-t", "filter", "-L", firewallTable, "-n")
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		// Chain doesn't exist, create it
@@ -38,11 +38,11 @@ func setupFirewallTable() error {
 		// Create the chain and set up rules
 		cmds := [][]string{
 			// Create the chain
-			{"iptables", "-t", "filter", "-N", firewallTable},
+			{"iptables", "-w", "-t", "filter", "-N", firewallTable},
 			// Set default policy to RETURN (continue processing)
-			{"iptables", "-t", "filter", "-A", firewallTable, "-j", "RETURN"},
+			{"iptables", "-w", "-t", "filter", "-A", firewallTable, "-j", "RETURN"},
 			// Insert our chain at the beginning of the INPUT chain
-			{"iptables", "-t", "filter", "-I", "INPUT", "1", "-j", firewallTable},
+			{"iptables", "-w", "-t", "filter", "-I", "INPUT", "1", "-j", firewallTable},
 		}
 		
 		for _, cmdArgs := range cmds {
