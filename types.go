@@ -8,10 +8,12 @@ import (
 
 // FileState tracks the state of a file being monitored
 type FileState struct {
-	File     *os.File
-	Position int64
-	Size     int64
-	LastMod  time.Time
+	File            *os.File
+	Position        int64
+	Size            int64
+	LastMod         time.Time
+	LastTimestamp   time.Time // Timestamp of the last processed log entry
+	LastProcessedIP string    // Last IP that was processed
 }
 
 // Global variables
