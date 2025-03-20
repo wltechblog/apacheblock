@@ -320,4 +320,4 @@ Apache Block logs its activity to the standard output, which can be redirected t
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the GNU Public License 2.0 - see the LICENSE file for details.
