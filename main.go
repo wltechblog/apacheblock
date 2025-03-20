@@ -61,81 +61,98 @@ func main() {
 	clientMode := *block != "" || *unblock != "" || *check != "" || *list
 	
 	if clientMode {
-		// Client mode - perform the requested operation and exit
-		var err error
+		// For all client mode commands, try socket first
+		var command ClientCommand
+		var target string
+		
+		if *block != "" {
+			command = BlockCommand
+			target = *block
+		} else if *unblock != "" {
+			command = UnblockCommand
+			target = *unblock
+		} else if *check != "" {
+			command = CheckCommand
+			target = *check
+		} else if *list {
+			command = ListCommand
+			target = ""
+		}
 		
 		// Try to send the command to a running server first
-		if *check != "" {
-			// For check command, try socket first
-			err = sendCommand(CheckCommand, *check)
-			if err == nil {
-				// Command was successfully sent to the server
-				os.Exit(0)
-			}
-			
-			// If socket failed, just load the blocklist and check (no firewall setup needed)
-			log.Printf("Could not connect to server: %v", err)
-			log.Printf("Checking blocklist file directly")
-			
-			// Just load the blocklist
-			if err := loadBlockList(); err != nil {
-				log.Printf("Warning: Failed to load blocklist: %v", err)
-			}
-			
-			// Check if the IP is blocked
-			if err := clientCheckIP(*check); err != nil {
+		err := sendCommand(command, target)
+		if err == nil {
+			// Command was successfully sent to the server
+			os.Exit(0)
+		}
+		
+		// If socket failed, handle each command appropriately
+		log.Printf("Could not connect to server: %v", err)
+		log.Printf("Executing command directly")
+		
+		// Just load the blocklist for all commands
+		if err := loadBlockList(); err != nil {
+			log.Printf("Warning: Failed to load blocklist: %v", err)
+		}
+		
+		// Handle each command differently
+		switch command {
+		case CheckCommand:
+			// For check, we don't need to set up the firewall
+			if err := clientCheckIP(target); err != nil {
 				log.Fatalf("Error checking IP: %v", err)
 			}
-			
-			os.Exit(0)
-		} else if *list {
-			// For list command, try socket first
-			err = sendCommand(ListCommand, "")
-			if err == nil {
-				// Command was successfully sent to the server
-				os.Exit(0)
-			}
-			
-			// If socket failed, just load the blocklist and list (no firewall setup needed)
-			log.Printf("Could not connect to server: %v", err)
-			log.Printf("Listing from blocklist file directly")
-			
-			// Just load the blocklist
-			if err := loadBlockList(); err != nil {
-				log.Printf("Warning: Failed to load blocklist: %v", err)
-			}
-			
-			// List blocked IPs and subnets
+		case ListCommand:
+			// For list, we don't need to set up the firewall
 			if err := clientListBlocked(); err != nil {
 				log.Fatalf("Error listing blocked IPs: %v", err)
 			}
+		case BlockCommand, UnblockCommand:
+			// For block/unblock, we need to set up the firewall
+			// But only do it once we've confirmed we need to make changes
 			
-			os.Exit(0)
-		} else {
-			// For block/unblock commands, we need the full setup
-			// Setup our custom firewall table
-			if err := setupFirewallTable(); err != nil {
-				log.Fatalf("Error setting up firewall table: %v", err)
+			// For block, check if already blocked
+			if command == BlockCommand {
+				isBlocked, err := isIPBlocked(target)
+				if err != nil {
+					log.Fatalf("Error checking if IP is blocked: %v", err)
+				}
+				if isBlocked {
+					log.Printf("%s is already blocked", target)
+					os.Exit(0)
+				}
+				
+				// Now we need to set up the firewall
+				if err := setupFirewallTable(); err != nil {
+					log.Fatalf("Error setting up firewall table: %v", err)
+				}
+				
+				// Block the IP
+				if err := clientBlockIP(target); err != nil {
+					log.Fatalf("Error blocking IP: %v", err)
+				}
 			}
 			
-			// Load the blocklist from file
-			if err := loadBlockList(); err != nil {
-				log.Printf("Warning: Failed to load blocklist: %v", err)
-			}
-			
-			// Load the rules from file
-			if err := loadRules(); err != nil {
-				log.Printf("Warning: Failed to load rules: %v", err)
-			}
-			
-			if *block != "" {
-				err = RunClientMode(BlockCommand, *block)
-			} else if *unblock != "" {
-				err = RunClientMode(UnblockCommand, *unblock)
-			}
-			
-			if err != nil {
-				log.Fatalf("Error in client mode: %v", err)
+			// For unblock, check if already unblocked
+			if command == UnblockCommand {
+				isBlocked, err := isIPBlocked(target)
+				if err != nil {
+					log.Fatalf("Error checking if IP is blocked: %v", err)
+				}
+				if !isBlocked {
+					log.Printf("%s is not blocked", target)
+					os.Exit(0)
+				}
+				
+				// Now we need to set up the firewall
+				if err := setupFirewallTable(); err != nil {
+					log.Fatalf("Error setting up firewall table: %v", err)
+				}
+				
+				// Unblock the IP
+				if err := clientUnblockIP(target); err != nil {
+					log.Fatalf("Error unblocking IP: %v", err)
+				}
 			}
 		}
 		

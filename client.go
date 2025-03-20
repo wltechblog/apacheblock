@@ -7,15 +7,14 @@ import (
 	"strings"
 )
 
-// ClientCommand represents the type of client operation to perform
+// ClientCommand represents a command that can be executed in client mode
 type ClientCommand string
 
 const (
-	// Client commands
-	BlockCommand    ClientCommand = "block"
-	UnblockCommand  ClientCommand = "unblock"
-	CheckCommand    ClientCommand = "check"
-	ListCommand     ClientCommand = "list"
+	BlockCommand   ClientCommand = "block"
+	UnblockCommand ClientCommand = "unblock"
+	CheckCommand   ClientCommand = "check"
+	ListCommand    ClientCommand = "list"
 )
 
 // RunClientMode executes the client mode operation
@@ -49,15 +48,53 @@ func RunClientMode(command ClientCommand, target string) error {
 	log.Printf("Could not connect to server: %v", err)
 	log.Printf("Executing command directly (changes will not affect a running server)")
 	
+	// Load the blocklist for all commands
+	if err := loadBlockList(); err != nil {
+		log.Printf("Warning: Failed to load blocklist: %v", err)
+	}
+	
 	// Execute the command directly
 	switch command {
 	case BlockCommand:
+		// Check if already blocked before setting up firewall
+		isBlocked, err := isIPBlocked(target)
+		if err != nil {
+			return err
+		}
+		if isBlocked {
+			fmt.Printf("%s is already blocked\n", target)
+			return nil
+		}
+		
+		// Now set up firewall and block
+		if err := setupFirewallTable(); err != nil {
+			return fmt.Errorf("failed to set up firewall table: %v", err)
+		}
 		return clientBlockIP(target)
+		
 	case UnblockCommand:
+		// Check if already unblocked before setting up firewall
+		isBlocked, err := isIPBlocked(target)
+		if err != nil {
+			return err
+		}
+		if !isBlocked {
+			fmt.Printf("%s is not blocked\n", target)
+			return nil
+		}
+		
+		// Now set up firewall and unblock
+		if err := setupFirewallTable(); err != nil {
+			return fmt.Errorf("failed to set up firewall table: %v", err)
+		}
 		return clientUnblockIP(target)
+		
 	case CheckCommand:
+		// No need to set up firewall for check
 		return clientCheckIP(target)
+		
 	case ListCommand:
+		// No need to set up firewall for list
 		return clientListBlocked()
 	}
 	
@@ -173,18 +210,16 @@ func clientListBlocked() error {
 		return nil
 	}
 	
-	if len(blockedIPs) > 0 {
-		fmt.Println("Blocked IPs:")
-		for ip := range blockedIPs {
-			fmt.Printf("  %s\n", ip)
-		}
+	fmt.Println("Blocked IPs and subnets:")
+	
+	// Print blocked IPs
+	for ip := range blockedIPs {
+		fmt.Printf("IP: %s\n", ip)
 	}
 	
-	if len(blockedSubnets) > 0 {
-		fmt.Println("Blocked Subnets:")
-		for subnet := range blockedSubnets {
-			fmt.Printf("  %s\n", subnet)
-		}
+	// Print blocked subnets
+	for subnet := range blockedSubnets {
+		fmt.Printf("Subnet: %s\n", subnet)
 	}
 	
 	return nil
@@ -228,13 +263,13 @@ func isIPBlocked(target string) (bool, error) {
 
 // isValidIPOrCIDR validates an IP address or CIDR range
 func isValidIPOrCIDR(target string) bool {
-	// Check if it's a CIDR
+	// Check if it's a CIDR range
 	if strings.Contains(target, "/") {
 		_, _, err := net.ParseCIDR(target)
 		return err == nil
 	}
 	
-	// Check if it's an IP
+	// Check if it's an IP address
 	ip := net.ParseIP(target)
 	return ip != nil
 }
