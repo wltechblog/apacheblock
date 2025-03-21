@@ -16,6 +16,7 @@ func main() {
 	Debug := flag.Bool("debug", false, "Debug mode")
 	Verbose := flag.Bool("verbose", false, "Verbose debug mode (logs all processed lines)")
 	whitelistPath := flag.String("whitelist", whitelistFilePath, "Path to whitelist file")
+	domainWhitelistPathFlag := flag.String("domainWhitelist", domainWhitelistPath, "Path to domain whitelist file")
 	blocklistPath := flag.String("blocklist", blocklistFilePath, "Path to blocklist file")
 	rulesPath := flag.String("rules", rulesFilePath, "Path to rules file")
 	tableName := flag.String("table", firewallTable, "Name of the iptables chain to use")
@@ -31,6 +32,9 @@ func main() {
 	unblock := flag.String("unblock", "", "Unblock an IP address or CIDR range")
 	check := flag.String("check", "", "Check if an IP address or CIDR range is blocked")
 	list := flag.Bool("list", false, "List all blocked IPs and subnets")
+	
+	// API key for socket authentication
+	apiKeyFlag := flag.String("apiKey", "", "API key for socket authentication")
 	
 	flag.Parse()
 
@@ -53,9 +57,18 @@ func main() {
 	
 	// Set the file paths and table name
 	whitelistFilePath = *whitelistPath
+	domainWhitelistPath = *domainWhitelistPathFlag
 	blocklistFilePath = *blocklistPath
 	rulesFilePath = *rulesPath
 	firewallTable = *tableName
+	
+	// Set the API key if provided
+	if *apiKeyFlag != "" {
+		apiKey = *apiKeyFlag
+		if debug {
+			log.Println("API key set for socket authentication")
+		}
+	}
 	
 	// Check if we're in client mode
 	clientMode := *block != "" || *unblock != "" || *check != "" || *list
@@ -194,8 +207,8 @@ func main() {
 	// Log configuration settings
 	log.Printf("Configuration: expirationPeriod=%v, threshold=%d, subnetThreshold=%d, startupLines=%d",
 		expirationPeriod, threshold, subnetThreshold, startupLines)
-	log.Printf("Files: whitelist=%s, blocklist=%s, iptables chain=%s",
-		whitelistFilePath, blocklistFilePath, firewallTable)
+	log.Printf("Files: whitelist=%s, domain whitelist=%s, blocklist=%s, iptables chain=%s",
+		whitelistFilePath, domainWhitelistPath, blocklistFilePath, firewallTable)
 	
 	// Determine whitelisted addresses from local interfaces
 	addrs, _ := net.InterfaceAddrs()
@@ -213,6 +226,13 @@ func main() {
 		log.Printf("Warning: Failed to read whitelist file: %v", err)
 	} else {
 		log.Printf("Successfully loaded whitelist from %s", whitelistFilePath)
+	}
+	
+	// Read domain whitelist from file
+	if err := readDomainWhitelistFile(domainWhitelistPath); err != nil {
+		log.Printf("Warning: Failed to read domain whitelist file: %v", err)
+	} else {
+		log.Printf("Successfully loaded domain whitelist from %s", domainWhitelistPath)
 	}
 
 	if *clean {

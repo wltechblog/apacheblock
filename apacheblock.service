@@ -3,7 +3,7 @@ Description=Apache Block - Web Server Security Tool
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/apacheblock -server apache -logPath /var/log/apache2
+ExecStart=/usr/local/bin/apacheblock -server apache -logPath /var/log/apache2 -domainWhitelist /etc/apacheblock/domainwhitelist.txt -apiKey "your-secret-key"
 Restart=always
 RestartSec=10
 User=root

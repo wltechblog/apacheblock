@@ -34,10 +34,18 @@ func processLogEntry(line, filePath string, state *FileState) {
 		return
 	}
 	
-	// Check whitelist
+	// Check IP whitelist
 	if isWhitelisted(ip) {
 		if debug {
 			log.Printf("IP %s is whitelisted, ignoring", ip)
+		}
+		return
+	}
+	
+	// Check domain whitelist
+	if isDomainWhitelisted(ip) {
+		if debug {
+			log.Printf("IP %s belongs to a whitelisted domain, ignoring", ip)
 		}
 		return
 	}

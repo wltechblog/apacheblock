@@ -29,11 +29,13 @@ var (
 	blockedSubnets    = make(map[string]struct{})
 	subnetAccessCount = make(map[string]int)
 	fileStates        = make(map[string]*FileState)
-	logFormat         string
-	logpath           string
-	whitelistFilePath = "/etc/apacheblock/whitelist.txt" // Default path for whitelist file
-	blocklistFilePath = "/etc/apacheblock/blocklist.json" // Default path for blocklist file
-	firewallTable     = "apacheblock" // Name of our custom iptables table
+	logFormat             string
+	logpath               string
+	whitelistFilePath     = "/etc/apacheblock/whitelist.txt" // Default path for whitelist file
+	domainWhitelistPath   = "/etc/apacheblock/domainwhitelist.txt" // Default path for domain whitelist file
+	blocklistFilePath     = "/etc/apacheblock/blocklist.json" // Default path for blocklist file
+	firewallTable         = "apacheblock" // Name of our custom iptables table
+	apiKey                = "" // API key for socket authentication
 	
 	// Configuration variables
 	expirationPeriod time.Duration // Time period to monitor for malicious activity

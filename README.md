@@ -7,7 +7,7 @@ Apache Block is a security tool for web servers that monitors log files for susp
 - Monitors Apache and Caddy log files for suspicious activity
 - Automatically blocks IP addresses that exceed a threshold of suspicious requests
 - Blocks entire subnets when multiple IPs from the same subnet are detected
-- Maintains a whitelist of IP addresses and subnets that should never be blocked
+- Maintains a whitelist of IP addresses, subnets, and domains that should never be blocked
 - Persists blocklist between restarts
 - Provides client mode for manual management of blocked IPs and subnets
 - Uses a dedicated iptables chain for better organization of firewall rules
@@ -61,6 +61,9 @@ sudo apacheblock -logPath /var/log/apache2
 # Specify custom whitelist file
 sudo apacheblock -whitelist /path/to/whitelist.txt
 
+# Specify custom domain whitelist file
+sudo apacheblock -domainWhitelist /path/to/domainwhitelist.txt
+
 # Enable debug mode for verbose logging
 sudo apacheblock -debug
 
@@ -112,6 +115,9 @@ sudo apacheblock -check 1.2.3.0/24
 
 # List all blocked IPs and subnets
 sudo apacheblock -list
+
+# Use with API key authentication
+sudo apacheblock -block 1.2.3.4 -apiKey "your-secret-key"
 ```
 
 #### Client-Server Communication
@@ -125,7 +131,109 @@ When you run a client mode command:
 This approach ensures that:
 - You can manage blocks without restarting the server
 - Changes are synchronized between client and server
-- The blocklist file remains consistent
+
+#### API Key Authentication
+
+You can secure the socket interface with an API key to prevent unauthorized access. When an API key is set, all client commands must include the same key to be processed.
+
+To set an API key when starting the server:
+
+```bash
+sudo apacheblock -apiKey "your-secret-key"
+```
+
+Then, when using client commands, you must include the same API key:
+
+```bash
+sudo apacheblock -block 1.2.3.4 -apiKey "your-secret-key"
+```
+
+This feature is particularly useful when creating web interfaces or other tools that interact with the Apache Block service.
+
+### PHP Web Interface
+
+Apache Block includes a modern web interface built with PHP and Tailwind CSS that provides a user-friendly way to manage blocked IPs and subnets.
+
+#### Features
+
+- Material Design-inspired interface with Tailwind CSS
+- Separate configuration file for security
+- Responsive layout that works on mobile and desktop
+- Quick actions to block, unblock, and check IP addresses
+- Visual display of currently blocked IPs and subnets
+- One-click unblocking directly from the list
+
+#### Installation
+
+1. Copy the example files to your web server directory:
+
+```bash
+# Create directory if it doesn't exist
+sudo mkdir -p /var/www/html/apacheblock
+
+# Copy the PHP files
+sudo cp /path/to/apacheblock/examples/apacheblock.php /var/www/html/apacheblock/
+sudo cp /path/to/apacheblock/examples/config.php /var/www/html/apacheblock/
+```
+
+2. Edit the configuration file to set your API key:
+
+```bash
+sudo nano /var/www/html/apacheblock/config.php
+```
+
+Update the configuration:
+
+```php
+<?php
+$config = [
+    'apiKey' => 'your-secret-key',  // Must match the key used when starting apacheblock
+    'executablePath' => '/usr/local/bin/apacheblock',
+    'debug' => false
+];
+```
+
+3. Configure sudo to allow the web server user to run apacheblock without a password:
+
+```bash
+# Edit sudoers file
+sudo visudo -f /etc/sudoers.d/apacheblock
+```
+
+Add the following line (replace `www-data` with your web server user):
+
+```
+www-data ALL=(ALL) NOPASSWD: /usr/local/bin/apacheblock
+```
+
+4. Set proper permissions:
+
+```bash
+sudo chown -R www-data:www-data /var/www/html/apacheblock
+sudo chmod 640 /var/www/html/apacheblock/config.php
+```
+
+5. Access the web interface through your browser (e.g., `http://your-server/apacheblock/`).
+
+#### Security Recommendations
+
+- Place the web interface behind a secure HTTPS connection
+- Implement web server authentication (e.g., HTTP Basic Auth)
+- Consider using a more robust authentication system for production environments
+- Regularly update your API key
+- Limit access to the web interface using IP-based restrictions
+
+#### Screenshots
+
+The web interface provides a clean, modern design:
+
+- Header with application title and description
+- IP management card with input field and action buttons
+- Results display for command output
+- Separate lists for blocked IPs and subnets with one-click unblocking
+- Responsive design that works on all device sizes
+
+**Note**: This is a basic example. In a production environment, you should implement proper authentication for the web interface itself to prevent unauthorized access.
 
 ## Command-line Options
 
@@ -136,9 +244,11 @@ This approach ensures that:
 | `-server` | `apache` | Log format: `apache` or `caddy` |
 | `-logPath` | `/var/customers/logs` | Directory containing log files |
 | `-whitelist` | `/etc/apacheblock/whitelist.txt` | Path to whitelist file |
+| `-domainWhitelist` | `/etc/apacheblock/domainwhitelist.txt` | Path to domain whitelist file |
 | `-blocklist` | `/etc/apacheblock/blocklist.json` | Path to blocklist file |
 | `-rules` | `/etc/apacheblock/rules.json` | Path to rules file |
 | `-table` | `apacheblock` | Name of the iptables chain to use |
+| `-apiKey` | `""` | API key for socket authentication |
 | `-debug` | `false` | Enable debug mode for basic logging |
 | `-verbose` | `false` | Enable verbose debug mode (logs all processed lines and rule matching) |
 | `-clean` | `false` | Remove all existing port blocking rules |
@@ -204,7 +314,9 @@ If the rules file doesn't exist, the program will create a default rules file wi
 
 ## Whitelist Configuration
 
-The whitelist file contains IP addresses and CIDR ranges that should never be blocked. Each entry should be on a separate line. Comments are supported using the `#` character.
+### IP Whitelist
+
+The IP whitelist file contains IP addresses and CIDR ranges that should never be blocked. Each entry should be on a separate line. Comments are supported using the `#` character.
 
 Example whitelist file:
 ```
@@ -219,6 +331,31 @@ Example whitelist file:
 ```
 
 If the whitelist file doesn't exist, the program will create an example file at the specified location.
+
+### Domain Whitelist
+
+The domain whitelist file contains domain names that should never be blocked. When an IP address is matched in a log file, the program performs a reverse DNS lookup on the IP, verifies it with a forward lookup, and checks if the hostname matches any domain in the whitelist.
+
+Example domain whitelist file:
+```
+# Individual domain names
+example.com
+google.com
+cloudflare.com
+
+# Subdomains
+api.example.com
+cdn.example.com
+```
+
+The domain whitelist feature works as follows:
+1. When an IP address is detected in a log file, a reverse DNS lookup is performed to get the hostname
+2. The hostname is verified with a forward DNS lookup to ensure it resolves back to the original IP
+3. If the hostname matches a domain in the whitelist (either exact match or as a subdomain), the IP is not blocked
+
+This feature is useful for ensuring that legitimate services from known domains are never blocked, even if their IP addresses change.
+
+If the domain whitelist file doesn't exist, the program will create an example file at the specified location.
 
 ## Blocklist Persistence
 
@@ -244,7 +381,8 @@ When the program starts, it loads the blocklist from this file and applies the r
 
 1. **Initialization**:
    - Creates a custom iptables chain for managing blocks
-   - Loads whitelist entries from the specified file
+   - Loads IP whitelist entries from the specified file
+   - Loads domain whitelist entries from the specified file
    - Automatically adds local IP addresses to the whitelist
    - Loads the blocklist from a JSON file and applies it to the firewall
    - Starts a socket server for client communication
@@ -304,7 +442,7 @@ Description=Apache Block - Web Server Security Tool
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/apacheblock -server apache -logPath /var/log/apache2 -whitelist /etc/apacheblock/whitelist.txt -blocklist /etc/apacheblock/blocklist.json -table apacheblock -threshold 5 -expirationPeriod 10m
+ExecStart=/usr/local/bin/apacheblock -server apache -logPath /var/log/apache2 -whitelist /etc/apacheblock/whitelist.txt -domainWhitelist /etc/apacheblock/domainwhitelist.txt -blocklist /etc/apacheblock/blocklist.json -table apacheblock -threshold 5 -expirationPeriod 10m
 Restart=always
 RestartSec=10
 User=root

@@ -20,6 +20,7 @@ type Message struct {
 	Target  string `json:"target,omitempty"`
 	Result  string `json:"result,omitempty"`
 	Success bool   `json:"success"`
+	APIKey  string `json:"api_key,omitempty"`
 }
 
 // startSocketServer starts a Unix domain socket server to listen for commands
@@ -80,6 +81,27 @@ func handleConnection(conn net.Conn) {
 
 	if debug {
 		log.Printf("Received command: %s, target: %s", msg.Command, msg.Target)
+	}
+
+	// Check API key if one is configured
+	if apiKey != "" && msg.APIKey != apiKey {
+		if debug {
+			log.Printf("Invalid API key received: %s", msg.APIKey)
+		}
+		
+		// Send error response
+		response := Message{
+			Command: msg.Command,
+			Target:  msg.Target,
+			Result:  "Authentication failed: Invalid API key",
+			Success: false,
+		}
+		
+		encoder := json.NewEncoder(conn)
+		if err := encoder.Encode(response); err != nil {
+			log.Printf("Error encoding response: %v", err)
+		}
+		return
 	}
 
 	// Process the command
@@ -181,6 +203,7 @@ func sendCommand(command ClientCommand, target string) error {
 	msg := Message{
 		Command: string(command),
 		Target:  target,
+		APIKey:  apiKey,
 	}
 
 	// Send the message
