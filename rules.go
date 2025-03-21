@@ -97,10 +97,10 @@ func createDefaultRulesFile() error {
 	defaultRules := RuleSet{
 		Rules: []Rule{
 			{
-				Name:        "Apache PHP 403/404",
-				Description: "Detects requests to PHP files resulting in 403 or 404 status codes in Apache logs",
-				LogFormat:   "apache",
-				Regex:       `^([\d\.]+) .* "GET .*\.php(?:\s+HTTP/[\d\.]+)?" (403|404) .*`,
+Name:        "Apache PHP 403/404",
+Description: "Detects requests to PHP files resulting in 403 or 404 status codes in Apache logs",
+LogFormat:   "apache",
+Regex:       `^([\d\.]+) .* "(?:GET|POST|HEAD) /[^?\s]*\.php(?:\?[^\s]*)?(?:\s+HTTP/[\d\.]+)" (403|404) .*`,
 				Threshold:   3,
 				Duration:    5 * time.Minute,
 				Enabled:     true,
