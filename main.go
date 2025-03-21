@@ -11,6 +11,7 @@ import (
 func main() {
 	// Basic options
 	clean := flag.Bool("clean", false, "Remove existing port blocking rules")
+	configPath := flag.String("config", DefaultConfigPath, "Path to configuration file")
 	server := flag.String("server", "apache", "Log format: apache or caddy")
 	logPath := flag.String("logPath", "/var/customers/logs", "Log path")
 	Debug := flag.Bool("debug", false, "Debug mode")
@@ -41,43 +42,122 @@ func main() {
 	
 	flag.Parse()
 
-	// Set configuration variables from flags
-	expirationPeriod = *expPeriod
-	threshold = *thresholdFlag
-	subnetThreshold = *subnetThresholdFlag
-	startupLines = *startupLinesFlag
-
+	// First, set debug mode if specified on command line
 	if *Debug {
 		debug = true
-		log.Println("Enabling debug mode")
+		log.Println("Enabling debug mode from command line")
+	}
+	
+	// Read configuration file
+	if err := readConfigFile(*configPath); err != nil {
+		log.Printf("Warning: Failed to read configuration file: %v", err)
+		
+		// Create example configuration file if it doesn't exist
+		if _, err := os.Stat(*configPath); os.IsNotExist(err) {
+			if err := createExampleConfigFile(*configPath); err != nil {
+				log.Printf("Warning: Failed to create example configuration file: %v", err)
+			} else {
+				log.Printf("Created example configuration file at %s", *configPath)
+			}
+		}
+	}
+	
+	// Command line flags override configuration file settings
+	
+	// Set configuration variables from flags
+	if *expPeriod != 5*time.Minute { // Check if user specified a non-default value
+		expirationPeriod = *expPeriod
+	}
+	if *thresholdFlag != 3 { // Check if user specified a non-default value
+		threshold = *thresholdFlag
+	}
+	if *subnetThresholdFlag != 3 { // Check if user specified a non-default value
+		subnetThreshold = *subnetThresholdFlag
+	}
+	if *startupLinesFlag != 5000 { // Check if user specified a non-default value
+		startupLines = *startupLinesFlag
+	}
+
+	// Command line flags override configuration file settings
+	if *Debug {
+		debug = true
+		log.Println("Enabling debug mode from command line")
 	}
 	
 	if *Verbose {
 		verbose = true
 		debug = true // Verbose implies debug
-		log.Println("Enabling verbose debug mode")
+		log.Println("Enabling verbose debug mode from command line")
 	}
 	
-	// Set the file paths and table name
-	whitelistFilePath = *whitelistPath
-	domainWhitelistPath = *domainWhitelistPathFlag
-	blocklistFilePath = *blocklistPath
-	rulesFilePath = *rulesPath
-	firewallTable = *tableName
-	
-	// Set the API key if provided
-	if *apiKeyFlag != "" {
-		apiKey = *apiKeyFlag
+	// Set the file paths and table name if specified on command line
+	if *whitelistPath != whitelistFilePath { // Check if user specified a non-default value
+		whitelistFilePath = *whitelistPath
 		if debug {
-			log.Println("API key set for socket authentication")
+			log.Println("Setting whitelist path from command line:", whitelistFilePath)
 		}
 	}
 	
-	// Set the socket path if provided
-	if *socketPathFlag != "" {
+	if *domainWhitelistPathFlag != domainWhitelistPath { // Check if user specified a non-default value
+		domainWhitelistPath = *domainWhitelistPathFlag
+		if debug {
+			log.Println("Setting domain whitelist path from command line:", domainWhitelistPath)
+		}
+	}
+	
+	if *blocklistPath != blocklistFilePath { // Check if user specified a non-default value
+		blocklistFilePath = *blocklistPath
+		if debug {
+			log.Println("Setting blocklist path from command line:", blocklistFilePath)
+		}
+	}
+	
+	if *rulesPath != rulesFilePath { // Check if user specified a non-default value
+		rulesFilePath = *rulesPath
+		if debug {
+			log.Println("Setting rules path from command line:", rulesFilePath)
+		}
+	}
+	
+	if *tableName != firewallTable { // Check if user specified a non-default value
+		firewallTable = *tableName
+		if debug {
+			log.Println("Setting firewall table from command line:", firewallTable)
+		}
+	}
+	
+	// Set the API key if provided on command line
+	if *apiKeyFlag != "" {
+		apiKey = *apiKeyFlag
+		if debug {
+			log.Println("API key set from command line")
+		}
+	}
+	
+	// Set the socket path if provided on command line
+	if *socketPathFlag != SocketPath { // Check if user specified a non-default value
 		SocketPath = *socketPathFlag
 		if debug {
-			log.Println("Socket path set to:", SocketPath)
+			log.Println("Socket path set from command line:", SocketPath)
+		}
+	}
+	
+	// Set server and log path if specified on command line
+	if *server != "apache" || logFormat == "" { // Check if user specified a non-default value or if not set in config
+		if *server == "apache" || *server == "caddy" {
+			logFormat = *server
+			if debug {
+				log.Println("Setting server from command line:", logFormat)
+			}
+		}
+	}
+	
+	if *logPath != "/var/customers/logs" || logpath == "" { // Check if user specified a non-default value or if not set in config
+		if _, err := os.Stat(*logPath); err == nil {
+			logpath = *logPath
+			if debug {
+				log.Println("Setting log path from command line:", logpath)
+			}
 		}
 	}
 	

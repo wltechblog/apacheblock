@@ -242,12 +242,81 @@ The web interface provides a clean, modern design:
 
 **Note**: This is a basic example. In a production environment, you should implement proper authentication for the web interface itself to prevent unauthorized access.
 
+## Configuration
+
+Apache Block can be configured in two ways:
+
+1. Using command-line options
+2. Using a configuration file
+
+The configuration file provides a convenient way to set all options in one place, while command-line options allow for quick changes and overrides. Command-line options always take precedence over settings in the configuration file.
+
+### Configuration File
+
+By default, Apache Block looks for a configuration file at `/etc/apacheblock/apacheblock.conf`. You can specify a different location using the `-config` command-line option.
+
+If the configuration file doesn't exist when the program starts, an example configuration file will be created automatically.
+
+Example configuration file:
+
+```
+# Apache Block Configuration File
+# This file contains configuration settings for the Apache Block service.
+# Lines starting with # are comments and will be ignored.
+
+# Log format: apache or caddy
+server = apache
+
+# Path to log files
+logPath = /var/customers/logs
+
+# Path to whitelist file
+whitelist = /etc/apacheblock/whitelist.txt
+
+# Path to domain whitelist file
+domainWhitelist = /etc/apacheblock/domainwhitelist.txt
+
+# Path to blocklist file
+blocklist = /etc/apacheblock/blocklist.json
+
+# Path to rules file
+rules = /etc/apacheblock/rules.json
+
+# Name of the iptables chain to use
+table = apacheblock
+
+# API key for socket authentication (leave empty for no authentication)
+apiKey =
+
+# Path to the Unix domain socket for client-server communication
+socketPath = /var/run/apacheblock.sock
+
+# Enable debug mode (true/false)
+debug = false
+
+# Enable verbose debug mode (true/false)
+verbose = false
+
+# Time period to monitor for malicious activity (e.g., 5m, 10m, 1h)
+expirationPeriod = 5m
+
+# Number of suspicious requests to trigger IP blocking
+threshold = 3
+
+# Number of IPs from a subnet to trigger subnet blocking
+subnetThreshold = 3
+
+# Number of log lines to process at startup
+startupLines = 5000
+```
+
 ## Command-line Options
 
 ### Basic Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `-config` | `/etc/apacheblock/apacheblock.conf` | Path to configuration file |
 | `-server` | `apache` | Log format: `apache` or `caddy` |
 | `-logPath` | `/var/customers/logs` | Directory containing log files |
 | `-whitelist` | `/etc/apacheblock/whitelist.txt` | Path to whitelist file |

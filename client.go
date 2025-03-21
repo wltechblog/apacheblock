@@ -57,12 +57,16 @@ func RunClientMode(command ClientCommand, target string) error {
 	switch command {
 	case BlockCommand:
 		// Check if already blocked before setting up firewall
-		isBlocked, err := isIPBlocked(target)
+		isBlocked, subnet, err := isIPBlocked(target)
 		if err != nil {
 			return err
 		}
 		if isBlocked {
-			fmt.Printf("%s is already blocked\n", target)
+			if subnet != "" {
+				fmt.Printf("%s is already blocked (contained in subnet %s)\n", target, subnet)
+			} else {
+				fmt.Printf("%s is already blocked\n", target)
+			}
 			return nil
 		}
 		
@@ -74,7 +78,7 @@ func RunClientMode(command ClientCommand, target string) error {
 		
 	case UnblockCommand:
 		// Check if already unblocked before setting up firewall
-		isBlocked, err := isIPBlocked(target)
+		isBlocked, _, err := isIPBlocked(target)
 		if err != nil {
 			return err
 		}
@@ -104,13 +108,17 @@ func RunClientMode(command ClientCommand, target string) error {
 // clientBlockIP manually blocks an IP or subnet
 func clientBlockIP(target string) error {
 	// Check if it's already blocked
-	isBlocked, err := isIPBlocked(target)
+	isBlocked, subnet, err := isIPBlocked(target)
 	if err != nil {
 		return err
 	}
 	
 	if isBlocked {
-		fmt.Printf("%s is already blocked\n", target)
+		if subnet != "" {
+			fmt.Printf("%s is already blocked (contained in subnet %s)\n", target, subnet)
+		} else {
+			fmt.Printf("%s is already blocked\n", target)
+		}
 		return nil
 	}
 	
@@ -150,7 +158,7 @@ func clientBlockIP(target string) error {
 // clientUnblockIP manually unblocks an IP or subnet
 func clientUnblockIP(target string) error {
 	// Check if it's blocked
-	isBlocked, err := isIPBlocked(target)
+	isBlocked, _, err := isIPBlocked(target)
 	if err != nil {
 		return err
 	}
@@ -186,13 +194,17 @@ func clientUnblockIP(target string) error {
 
 // clientCheckIP checks if an IP or subnet is blocked
 func clientCheckIP(target string) error {
-	isBlocked, err := isIPBlocked(target)
+	isBlocked, subnet, err := isIPBlocked(target)
 	if err != nil {
 		return err
 	}
 	
 	if isBlocked {
-		fmt.Printf("%s is blocked\n", target)
+		if subnet != "" {
+			fmt.Printf("%s is blocked (contained in subnet %s)\n", target, subnet)
+		} else {
+			fmt.Printf("%s is blocked\n", target)
+		}
 	} else {
 		fmt.Printf("%s is not blocked\n", target)
 	}
@@ -226,25 +238,28 @@ func clientListBlocked() error {
 }
 
 // isIPBlocked checks if an IP or subnet is blocked
-func isIPBlocked(target string) (bool, error) {
+// Returns: isBlocked, containingSubnet, error
+// If the IP is directly blocked, containingSubnet will be empty
+// If the IP is blocked because it's in a subnet, containingSubnet will contain that subnet
+func isIPBlocked(target string) (bool, string, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	
 	// Check if it's a subnet
 	if strings.Contains(target, "/") {
 		_, exists := blockedSubnets[target]
-		return exists, nil
+		return exists, "", nil
 	}
 	
 	// Check if it's an IP
 	if _, exists := blockedIPs[target]; exists {
-		return true, nil
+		return true, "", nil
 	}
 	
 	// Check if the IP is in a blocked subnet
 	ip := net.ParseIP(target)
 	if ip == nil {
-		return false, fmt.Errorf("invalid IP address: %s", target)
+		return false, "", fmt.Errorf("invalid IP address: %s", target)
 	}
 	
 	for subnet := range blockedSubnets {
@@ -254,11 +269,11 @@ func isIPBlocked(target string) (bool, error) {
 		}
 		
 		if ipNet.Contains(ip) {
-			return true, nil
+			return true, subnet, nil
 		}
 	}
 	
-	return false, nil
+	return false, "", nil
 }
 
 // isValidIPOrCIDR validates an IP address or CIDR range
