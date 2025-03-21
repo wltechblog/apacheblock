@@ -108,6 +108,7 @@ sudo apacheblock -unblock 1.2.3.4
 sudo apacheblock -unblock 1.2.3.0/24
 
 # Check if an IP address is blocked
+# (Will also show if the IP is blocked because it's contained in a blocked subnet)
 sudo apacheblock -check 1.2.3.4
 
 # Check if a subnet is blocked
@@ -118,6 +119,12 @@ sudo apacheblock -list
 
 # Use with API key authentication
 sudo apacheblock -block 1.2.3.4 -apiKey "your-secret-key"
+
+# Use with custom socket path
+sudo apacheblock -block 1.2.3.4 -socketPath "/tmp/apacheblock.sock"
+
+# Combine options
+sudo apacheblock -block 1.2.3.4 -apiKey "your-secret-key" -socketPath "/tmp/apacheblock.sock"
 ```
 
 #### Client-Server Communication
@@ -249,6 +256,7 @@ The web interface provides a clean, modern design:
 | `-rules` | `/etc/apacheblock/rules.json` | Path to rules file |
 | `-table` | `apacheblock` | Name of the iptables chain to use |
 | `-apiKey` | `""` | API key for socket authentication |
+| `-socketPath` | `/var/run/apacheblock.sock` | Path to the Unix domain socket for client-server communication |
 | `-debug` | `false` | Enable debug mode for basic logging |
 | `-verbose` | `false` | Enable verbose debug mode (logs all processed lines and rule matching) |
 | `-clean` | `false` | Remove all existing port blocking rules |

@@ -9,7 +9,7 @@ $config = [
     // API key for authentication (must match the key used when starting apacheblock)
     'apiKey' => 'your-secret-key',
 
-    // Path to the apacheblock socket
+    // Path to the apacheblock socket (must match the path used when starting apacheblock)
     'socketPath' => '/var/run/apacheblock.sock',
 
     // Path to the apacheblock executable (used as fallback if socket communication fails)

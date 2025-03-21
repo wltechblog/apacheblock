@@ -9,10 +9,8 @@ import (
 	"path/filepath"
 )
 
-const (
-	// SocketPath is the path to the Unix domain socket
-	SocketPath = "/var/run/apacheblock.sock"
-)
+// SocketPath is the path to the Unix domain socket
+var SocketPath = "/var/run/apacheblock.sock"
 
 // Message represents a command sent over the socket
 type Message struct {
@@ -44,8 +42,8 @@ func startSocketServer() error {
 		return fmt.Errorf("failed to create socket: %v", err)
 	}
 
-	// Set permissions on the socket
-	if err := os.Chmod(SocketPath, 0660); err != nil {
+	// Set permissions on the socket to allow non-root clients to connect
+	if err := os.Chmod(SocketPath, 0666); err != nil {
 		return fmt.Errorf("failed to set socket permissions: %v", err)
 	}
 
@@ -139,11 +137,15 @@ func processCommand(msg Message) Message {
 		}
 
 	case string(CheckCommand):
-		isBlocked, err := isIPBlocked(msg.Target)
+		isBlocked, subnet, err := isIPBlocked(msg.Target)
 		if err != nil {
 			response.Result = fmt.Sprintf("Failed to check %s: %v", msg.Target, err)
 		} else if isBlocked {
-			response.Result = fmt.Sprintf("%s is blocked", msg.Target)
+			if subnet != "" {
+				response.Result = fmt.Sprintf("%s is blocked (contained in subnet %s)", msg.Target, subnet)
+			} else {
+				response.Result = fmt.Sprintf("%s is blocked", msg.Target)
+			}
 			response.Success = true
 		} else {
 			response.Result = fmt.Sprintf("%s is not blocked", msg.Target)

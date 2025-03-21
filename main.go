@@ -36,6 +36,9 @@ func main() {
 	// API key for socket authentication
 	apiKeyFlag := flag.String("apiKey", "", "API key for socket authentication")
 	
+	// Socket path for client-server communication
+	socketPathFlag := flag.String("socketPath", SocketPath, "Path to the Unix domain socket for client-server communication")
+	
 	flag.Parse()
 
 	// Set configuration variables from flags
@@ -67,6 +70,14 @@ func main() {
 		apiKey = *apiKeyFlag
 		if debug {
 			log.Println("API key set for socket authentication")
+		}
+	}
+	
+	// Set the socket path if provided
+	if *socketPathFlag != "" {
+		SocketPath = *socketPathFlag
+		if debug {
+			log.Println("Socket path set to:", SocketPath)
 		}
 	}
 	
@@ -126,12 +137,16 @@ func main() {
 			
 			// For block, check if already blocked
 			if command == BlockCommand {
-				isBlocked, err := isIPBlocked(target)
+				isBlocked, subnet, err := isIPBlocked(target)
 				if err != nil {
 					log.Fatalf("Error checking if IP is blocked: %v", err)
 				}
 				if isBlocked {
-					log.Printf("%s is already blocked", target)
+					if subnet != "" {
+						log.Printf("%s is already blocked (contained in subnet %s)", target, subnet)
+					} else {
+						log.Printf("%s is already blocked", target)
+					}
 					os.Exit(0)
 				}
 				
@@ -148,7 +163,7 @@ func main() {
 			
 			// For unblock, check if already unblocked
 			if command == UnblockCommand {
-				isBlocked, err := isIPBlocked(target)
+				isBlocked, _, err := isIPBlocked(target)
 				if err != nil {
 					log.Fatalf("Error checking if IP is blocked: %v", err)
 				}

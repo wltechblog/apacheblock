@@ -93,19 +93,50 @@ function executeCommandViaSocket($command, $target = "") {
 
     // Send the message
     $jsonMessage = json_encode($message) . "\n";
-    socket_write($socket, $jsonMessage, strlen($jsonMessage));
+    $writeResult = @socket_write($socket, $jsonMessage, strlen($jsonMessage));
 
-    // Read the response
+    if ($writeResult === false) {
+        $errorCode = socket_last_error($socket);
+        $errorMessage = socket_strerror($errorCode);
+        socket_close($socket);
+
+        if ($config['debug']) {
+            error_log("Socket write failed: [$errorCode] $errorMessage");
+        }
+
+        return [
+            'success' => false,
+            'output' => "Error sending command to apacheblock service: [$errorCode] $errorMessage"
+        ];
+    }
+
+    // Read the response with timeout
     $response = '';
-    while ($out = socket_read($socket, 2048)) {
-        $response .= $out;
+    $readResult = false;
+
+    // Read with a timeout
+    $read = [$socket];
+    $write = $except = [];
+    if (@socket_select($read, $write, $except, 5)) {
+        while ($out = @socket_read($socket, 2048)) {
+            $response .= $out;
+            $readResult = true;
+            if (strlen($out) < 2048) break; // If we got less than the buffer size, we're done
+        }
     }
 
     // Close the socket
     socket_close($socket);
 
+    if (!$readResult) {
+        return [
+            'success' => false,
+            'output' => "No response received from apacheblock service. The service may be busy or unresponsive."
+        ];
+    }
+
     // Parse the response
-    $responseData = json_decode($response, true);
+    $responseData = @json_decode($response, true);
     if (!$responseData) {
         return [
             'success' => false,
@@ -141,6 +172,10 @@ function executeCommandViaExecutable($command, $target = "") {
         $cmd .= " -apiKey " . escapeshellarg($config['apiKey']);
     }
 
+    if (!empty($config['socketPath'])) {
+        $cmd .= " -socketPath " . escapeshellarg($config['socketPath']);
+    }
+
     if ($config['debug']) {
         error_log("Executing command (fallback): " . preg_replace('/-apiKey\s+[^\s]+/', '-apiKey [REDACTED]', $cmd));
     }
@@ -173,11 +208,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         case 'list':
             $result = executeCommand('list');
             break;
+        case 'refresh':
+            // Just refresh the page to check service status again
+            header('Location: ' . $_SERVER['PHP_SELF']);
+            exit;
+            break;
     }
 }
 
 // Check if the apacheblock service is running
 $serviceStatus = checkServiceStatus();
+
+// Add a small delay to ensure socket is fully closed before next command
+usleep(100000); // 100ms delay
 
 // Get current list of blocked IPs
 $blockedList = executeCommand('list');
@@ -200,8 +243,11 @@ if ($blockedList['success']) {
 function checkServiceStatus() {
     global $config;
 
+    $debug = !empty($config['debug']) && $config['debug'];
+
     // Check if socket exists and is accessible
     if (empty($config['socketPath'])) {
+        if ($debug) error_log("Status check: Socket path not configured");
         return [
             'running' => false,
             'message' => 'Socket path not configured'
@@ -210,15 +256,33 @@ function checkServiceStatus() {
 
     // Check if socket file exists
     if (!file_exists($config['socketPath'])) {
+        if ($debug) error_log("Status check: Socket file not found at " . $config['socketPath']);
         return [
             'running' => false,
             'message' => 'Socket file not found'
         ];
     }
 
+    if ($debug) error_log("Status check: Socket file exists at " . $config['socketPath']);
+
+    // Instead of just checking if the socket file exists and can be connected to,
+    // let's actually try to send a simple command to verify the service is working
+
+    // Create a test message (list command is lightweight)
+    $message = [
+        'command' => 'list',
+        'target' => '',
+        'api_key' => $config['apiKey'] ?? ''
+    ];
+
+    if ($debug) error_log("Status check: Creating socket");
+
     // Try to connect to the socket
     $socket = @socket_create(AF_UNIX, SOCK_STREAM, 0);
     if (!$socket) {
+        $errorCode = socket_last_error();
+        $errorMessage = socket_strerror($errorCode);
+        if ($debug) error_log("Status check: Could not create socket: [$errorCode] $errorMessage");
         return [
             'running' => false,
             'message' => 'Could not create socket'
@@ -226,20 +290,82 @@ function checkServiceStatus() {
     }
 
     // Set a short timeout
-    socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, ['sec' => 1, 'usec' => 0]);
-    socket_set_option($socket, SOL_SOCKET, SO_SNDTIMEO, ['sec' => 1, 'usec' => 0]);
+    socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, ['sec' => 2, 'usec' => 0]);
+    socket_set_option($socket, SOL_SOCKET, SO_SNDTIMEO, ['sec' => 2, 'usec' => 0]);
+
+    if ($debug) error_log("Status check: Connecting to socket");
 
     // Try to connect
     $result = @socket_connect($socket, $config['socketPath']);
-    socket_close($socket);
-
     if (!$result) {
+        $errorCode = socket_last_error($socket);
+        $errorMessage = socket_strerror($errorCode);
+        socket_close($socket);
+        if ($debug) error_log("Status check: Could not connect to socket: [$errorCode] $errorMessage");
         return [
             'running' => false,
             'message' => 'Could not connect to socket'
         ];
     }
 
+    if ($debug) error_log("Status check: Connected to socket, sending test message");
+
+    // Send the test message
+    $jsonMessage = json_encode($message) . "\n";
+    $writeResult = @socket_write($socket, $jsonMessage, strlen($jsonMessage));
+
+    if ($writeResult === false) {
+        $errorCode = socket_last_error($socket);
+        $errorMessage = socket_strerror($errorCode);
+        socket_close($socket);
+        if ($debug) error_log("Status check: Could not write to socket: [$errorCode] $errorMessage");
+        return [
+            'running' => false,
+            'message' => 'Could not write to socket'
+        ];
+    }
+
+    if ($debug) error_log("Status check: Message sent, waiting for response");
+
+    // Try to read the response
+    $response = '';
+    $readResult = false;
+
+    // Read with a timeout
+    $read = [$socket];
+    $write = $except = [];
+    if (@socket_select($read, $write, $except, 2)) {
+        while ($out = @socket_read($socket, 2048)) {
+            $response .= $out;
+            $readResult = true;
+            if (strlen($out) < 2048) break; // If we got less than the buffer size, we're done
+        }
+    }
+
+    socket_close($socket);
+
+    if (!$readResult) {
+        if ($debug) error_log("Status check: No response from service");
+        return [
+            'running' => false,
+            'message' => 'No response from service'
+        ];
+    }
+
+    if ($debug) error_log("Status check: Response received: " . substr($response, 0, 100) . (strlen($response) > 100 ? '...' : ''));
+
+    // Try to parse the response
+    $responseData = @json_decode($response, true);
+    if (!$responseData) {
+        if ($debug) error_log("Status check: Invalid response from service");
+        return [
+            'running' => false,
+            'message' => 'Invalid response from service'
+        ];
+    }
+
+    // If we got here, the service is running and responding
+    if ($debug) error_log("Status check: Service is running");
     return [
         'running' => true,
         'message' => 'Service is running'
@@ -338,11 +464,18 @@ function checkServiceStatus() {
                         </span>
                     </div>
                     <?php if (!$serviceStatus['running'] && !empty($config['allowExecutableFallback']) && $config['allowExecutableFallback']): ?>
-                    <div class="text-amber-600 text-sm flex items-center">
+                    <div class="text-amber-600 text-sm flex items-center mr-2">
                         <span class="material-icons mr-1 text-sm">warning</span>
                         <span>Using fallback mode</span>
                     </div>
                     <?php endif; ?>
+                    <form method="post" class="ml-2">
+                        <input type="hidden" name="action" value="refresh">
+                        <button type="submit" class="text-gray-600 hover:text-primary-600 flex items-center text-sm">
+                            <span class="material-icons text-sm mr-1">refresh</span>
+                            <span>Refresh</span>
+                        </button>
+                    </form>
                 </div>
             </div>
         </header>
