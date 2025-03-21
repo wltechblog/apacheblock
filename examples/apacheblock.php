@@ -12,9 +12,124 @@ if (file_exists(__DIR__ . '/config.php')) {
     die('Configuration file not found. Please create config.php.');
 }
 
-// Function to execute apacheblock command
+// Function to execute apacheblock command via socket with fallback to executable
 function executeCommand($command, $target = "") {
     global $config;
+
+    // Try socket communication first
+    $socketResult = executeCommandViaSocket($command, $target);
+
+    // If socket communication failed and fallback is enabled, try executable
+    if (!$socketResult['success'] && !empty($config['allowExecutableFallback']) && $config['allowExecutableFallback']) {
+        if ($config['debug']) {
+            error_log("Socket communication failed, falling back to executable");
+        }
+        return executeCommandViaExecutable($command, $target);
+    }
+
+    return $socketResult;
+}
+
+// Function to execute apacheblock command via socket
+function executeCommandViaSocket($command, $target = "") {
+    global $config;
+
+    // Check if socket path is configured
+    if (empty($config['socketPath'])) {
+        return [
+            'success' => false,
+            'output' => "Error: Socket path not configured"
+        ];
+    }
+
+    // Create message for socket communication
+    $message = [
+        'command' => $command,
+        'target' => $target,
+        'api_key' => $config['apiKey'] ?? ''
+    ];
+
+    if ($config['debug']) {
+        $logMessage = json_encode($message);
+        // Redact API key for logging
+        $logMessage = preg_replace('/"api_key":"[^"]+/', '"api_key":"[REDACTED]', $logMessage);
+        error_log("Sending command via socket: " . $logMessage);
+    }
+
+    // Connect to the socket
+    $socket = @socket_create(AF_UNIX, SOCK_STREAM, 0);
+    if (!$socket) {
+        $errorCode = socket_last_error();
+        $errorMessage = socket_strerror($errorCode);
+        return [
+            'success' => false,
+            'output' => "Error creating socket: [$errorCode] $errorMessage"
+        ];
+    }
+
+    // Set timeout to prevent hanging
+    socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, ['sec' => 5, 'usec' => 0]);
+    socket_set_option($socket, SOL_SOCKET, SO_SNDTIMEO, ['sec' => 5, 'usec' => 0]);
+
+    // Connect to the socket
+    $result = @socket_connect($socket, $config['socketPath']);
+    if (!$result) {
+        $errorCode = socket_last_error($socket);
+        $errorMessage = socket_strerror($errorCode);
+        socket_close($socket);
+
+        // If socket connection fails, try to check if the server is running
+        if ($config['debug']) {
+            error_log("Socket connection failed: [$errorCode] $errorMessage");
+            error_log("Socket path: " . $config['socketPath']);
+            error_log("Checking if socket file exists: " . (file_exists($config['socketPath']) ? 'Yes' : 'No'));
+        }
+
+        return [
+            'success' => false,
+            'output' => "Error connecting to apacheblock service: [$errorCode] $errorMessage\n\nThe apacheblock service may not be running."
+        ];
+    }
+
+    // Send the message
+    $jsonMessage = json_encode($message) . "\n";
+    socket_write($socket, $jsonMessage, strlen($jsonMessage));
+
+    // Read the response
+    $response = '';
+    while ($out = socket_read($socket, 2048)) {
+        $response .= $out;
+    }
+
+    // Close the socket
+    socket_close($socket);
+
+    // Parse the response
+    $responseData = json_decode($response, true);
+    if (!$responseData) {
+        return [
+            'success' => false,
+            'output' => "Error parsing response from server: " . $response
+        ];
+    }
+
+    return [
+        'success' => $responseData['success'],
+        'output' => $responseData['result']
+    ];
+}
+
+// Function to execute apacheblock command via executable (fallback method)
+function executeCommandViaExecutable($command, $target = "") {
+    global $config;
+
+    // Check if executable path is configured
+    if (empty($config['executablePath'])) {
+        return [
+            'success' => false,
+            'output' => "Error: Executable path not configured"
+        ];
+    }
 
     $cmd = "sudo " . $config['executablePath'] . " -{$command}";
 
@@ -27,7 +142,7 @@ function executeCommand($command, $target = "") {
     }
 
     if ($config['debug']) {
-        error_log("Executing command: " . preg_replace('/-apiKey\s+[^\s]+/', '-apiKey [REDACTED]', $cmd));
+        error_log("Executing command (fallback): " . preg_replace('/-apiKey\s+[^\s]+/', '-apiKey [REDACTED]', $cmd));
     }
 
     exec($cmd, $output, $returnCode);
@@ -61,6 +176,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// Check if the apacheblock service is running
+$serviceStatus = checkServiceStatus();
+
 // Get current list of blocked IPs
 $blockedList = executeCommand('list');
 
@@ -76,6 +194,56 @@ if ($blockedList['success']) {
             $blockedSubnets[] = trim(substr($line, 8));
         }
     }
+}
+
+// Function to check if the apacheblock service is running
+function checkServiceStatus() {
+    global $config;
+
+    // Check if socket exists and is accessible
+    if (empty($config['socketPath'])) {
+        return [
+            'running' => false,
+            'message' => 'Socket path not configured'
+        ];
+    }
+
+    // Check if socket file exists
+    if (!file_exists($config['socketPath'])) {
+        return [
+            'running' => false,
+            'message' => 'Socket file not found'
+        ];
+    }
+
+    // Try to connect to the socket
+    $socket = @socket_create(AF_UNIX, SOCK_STREAM, 0);
+    if (!$socket) {
+        return [
+            'running' => false,
+            'message' => 'Could not create socket'
+        ];
+    }
+
+    // Set a short timeout
+    socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, ['sec' => 1, 'usec' => 0]);
+    socket_set_option($socket, SOL_SOCKET, SO_SNDTIMEO, ['sec' => 1, 'usec' => 0]);
+
+    // Try to connect
+    $result = @socket_connect($socket, $config['socketPath']);
+    socket_close($socket);
+
+    if (!$result) {
+        return [
+            'running' => false,
+            'message' => 'Could not connect to socket'
+        ];
+    }
+
+    return [
+        'running' => true,
+        'message' => 'Service is running'
+    ];
 }
 ?>
 
@@ -154,12 +322,49 @@ if ($blockedList['success']) {
     <div class="container mx-auto px-4 py-8 max-w-4xl">
         <!-- Header -->
         <header class="bg-white shadow-md rounded-lg p-6 mb-6">
-            <div class="flex items-center">
-                <span class="material-icons text-4xl text-primary-600 mr-3">security</span>
-                <h1 class="text-2xl font-bold text-gray-800">Apache Block Manager</h1>
+            <div class="flex items-center justify-between">
+                <div class="flex items-center">
+                    <span class="material-icons text-4xl text-primary-600 mr-3">security</span>
+                    <div>
+                        <h1 class="text-2xl font-bold text-gray-800">Apache Block Manager</h1>
+                        <p class="text-gray-600 mt-1">Manage blocked IP addresses and subnets</p>
+                    </div>
+                </div>
+                <div class="flex items-center">
+                    <div class="flex items-center <?php echo $serviceStatus['running'] ? 'text-green-600' : 'text-red-600'; ?> mr-2">
+                        <span class="material-icons mr-1"><?php echo $serviceStatus['running'] ? 'check_circle' : 'error'; ?></span>
+                        <span class="text-sm font-medium">
+                            <?php echo $serviceStatus['running'] ? 'Service Running' : 'Service Not Running'; ?>
+                        </span>
+                    </div>
+                    <?php if (!$serviceStatus['running'] && !empty($config['allowExecutableFallback']) && $config['allowExecutableFallback']): ?>
+                    <div class="text-amber-600 text-sm flex items-center">
+                        <span class="material-icons mr-1 text-sm">warning</span>
+                        <span>Using fallback mode</span>
+                    </div>
+                    <?php endif; ?>
+                </div>
             </div>
-            <p class="text-gray-600 mt-2">Manage blocked IP addresses and subnets</p>
         </header>
+
+        <?php if (!$serviceStatus['running']): ?>
+        <!-- Service Warning -->
+        <div class="bg-amber-50 border-l-4 border-amber-500 text-amber-700 p-4 mb-6 rounded shadow-sm">
+            <div class="flex items-center">
+                <span class="material-icons mr-2">warning</span>
+                <div>
+                    <p class="font-bold">Warning: Apache Block Manager service is not running</p>
+                    <p class="text-sm">
+                        <?php if (!empty($config['allowExecutableFallback']) && $config['allowExecutableFallback']): ?>
+                            Using fallback mode with direct command execution. Some features may be limited.
+                        <?php else: ?>
+                            Unable to communicate with the service. Please start the service or enable fallback mode in config.php.
+                        <?php endif; ?>
+                    </p>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
 
         <!-- IP Management Card -->
         <div class="bg-white shadow-md rounded-lg p-6 mb-6">

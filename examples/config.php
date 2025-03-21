@@ -1,18 +1,23 @@
 <?php
 /**
  * Apache Block Manager Configuration
- * 
+ *
  * This file contains configuration settings for the Apache Block Manager web interface.
  */
 
-// API Key for authentication with the apacheblock service
-// This must match the key used when starting apacheblock with the -apiKey flag
 $config = [
+    // API key for authentication (must match the key used when starting apacheblock)
     'apiKey' => 'your-secret-key',
-    
-    // Path to the apacheblock executable
+
+    // Path to the apacheblock socket
+    'socketPath' => '/var/run/apacheblock.sock',
+
+    // Path to the apacheblock executable (used as fallback if socket communication fails)
     'executablePath' => '/usr/local/bin/apacheblock',
-    
-    // Enable debug mode (set to true to see additional information)
-    'debug' => false
+
+    // Enable debug mode (logs commands to error log)
+    'debug' => false,
+
+    // Allow fallback to executable if socket fails
+    'allowExecutableFallback' => false
 ];
