@@ -151,21 +151,23 @@ func processLogEntry(line, filePath string, state *FileState) {
 		
 		// Check if we should block the subnet
 		if subnet != "" && !disableSubnetBlocking {
-			// Update subnet access count
-			var count int
-			mu.Lock()
-			subnetAccessCount[subnet]++
-			count = subnetAccessCount[subnet]
-			mu.Unlock()
-			
-			if debug {
-				log.Printf("Subnet %s has %d/%d IPs with suspicious activity", 
-					subnet, count, subnetThreshold)
-			}
-			
-			if count >= subnetThreshold {
-				blockSubnet(subnet)
-			}
+// Update subnet blocked IPs
+mu.Lock()
+if subnetBlockedIPs[subnet] == nil {
+    subnetBlockedIPs[subnet] = make(map[string]struct{})
+}
+subnetBlockedIPs[subnet][ip] = struct{}{}
+count := len(subnetBlockedIPs[subnet])
+mu.Unlock()
+
+if debug {
+    log.Printf("Subnet %s has %d/%d unique IPs blocked", 
+        subnet, count, subnetThreshold)
+}
+
+if count >= subnetThreshold {
+    blockSubnet(subnet)
+}
 		}
 	} else if debug {
 		log.Printf("IP %s has %d/%d suspicious requests (%s)",

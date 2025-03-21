@@ -27,7 +27,7 @@ var (
 	ipAccessLog       = make(map[string]*AccessRecord)
 	blockedIPs        = make(map[string]struct{})
 	blockedSubnets    = make(map[string]struct{})
-	subnetAccessCount = make(map[string]int)
+	subnetBlockedIPs = make(map[string]map[string]struct{}) // maps subnet to set of blocked IPs
 	fileStates        = make(map[string]*FileState)
 	logFormat             string
 	logpath               string
