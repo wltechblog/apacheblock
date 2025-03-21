@@ -263,7 +263,46 @@ function checkServiceStatus() {
         ];
     }
 
-    if ($debug) error_log("Status check: Socket file exists at " . $config['socketPath']);
+    // Check socket file permissions
+    $perms = fileperms($config['socketPath']);
+    $octal_perms = substr(sprintf('%o', $perms), -4);
+    if ($debug) {
+        error_log("Status check: Socket file exists at " . $config['socketPath']);
+        error_log("Status check: Socket file permissions: " . $octal_perms);
+
+        // Check if the web server user can read and write to the socket
+        $readable = is_readable($config['socketPath']);
+        $writable = is_writable($config['socketPath']);
+        error_log("Status check: Socket is readable by web server: " . ($readable ? 'Yes' : 'No'));
+        error_log("Status check: Socket is writable by web server: " . ($writable ? 'Yes' : 'No'));
+
+        // Get owner and group of the socket file
+        try {
+            if (function_exists('posix_getpwuid') && function_exists('posix_getgrgid') && function_exists('posix_geteuid')) {
+                $owner = posix_getpwuid(fileowner($config['socketPath']));
+                $group = posix_getgrgid(filegroup($config['socketPath']));
+                error_log("Status check: Socket owner: " . $owner['name']);
+                error_log("Status check: Socket group: " . $group['name']);
+
+                // Get the web server user
+                $webServerUser = posix_getpwuid(posix_geteuid());
+                error_log("Status check: Web server running as: " . $webServerUser['name']);
+            } else {
+                error_log("Status check: POSIX functions not available, cannot determine owner/group");
+            }
+        } catch (Exception $e) {
+            error_log("Status check: Error getting file ownership info: " . $e->getMessage());
+        }
+    }
+
+    // If the socket is not readable or writable by the web server, return an error
+    if (!is_readable($config['socketPath']) || !is_writable($config['socketPath'])) {
+        if ($debug) error_log("Status check: Socket file is not accessible by the web server");
+        return [
+            'running' => false,
+            'message' => 'Socket file is not accessible by the web server (permissions issue)'
+        ];
+    }
 
     // Instead of just checking if the socket file exists and can be connected to,
     // let's actually try to send a simple command to verify the service is working
@@ -289,9 +328,9 @@ function checkServiceStatus() {
         ];
     }
 
-    // Set a short timeout
-    socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, ['sec' => 2, 'usec' => 0]);
-    socket_set_option($socket, SOL_SOCKET, SO_SNDTIMEO, ['sec' => 2, 'usec' => 0]);
+    // Set a longer timeout (5 seconds instead of 2)
+    socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, ['sec' => 5, 'usec' => 0]);
+    socket_set_option($socket, SOL_SOCKET, SO_SNDTIMEO, ['sec' => 5, 'usec' => 0]);
 
     if ($debug) error_log("Status check: Connecting to socket");
 
@@ -331,10 +370,10 @@ function checkServiceStatus() {
     $response = '';
     $readResult = false;
 
-    // Read with a timeout
+    // Read with a longer timeout (5 seconds instead of 2)
     $read = [$socket];
     $write = $except = [];
-    if (@socket_select($read, $write, $except, 2)) {
+    if (@socket_select($read, $write, $except, 5)) {
         while ($out = @socket_read($socket, 2048)) {
             $response .= $out;
             $readResult = true;
@@ -345,22 +384,68 @@ function checkServiceStatus() {
     socket_close($socket);
 
     if (!$readResult) {
-        if ($debug) error_log("Status check: No response from service");
+        if ($debug) error_log("Status check: No response from service via socket");
+
+        // If fallback is enabled, try to check if the service is running using the executable
+        if (!empty($config['allowExecutableFallback']) && $config['allowExecutableFallback'] && !empty($config['executablePath'])) {
+            if ($debug) error_log("Status check: Trying fallback to executable");
+
+            // Try to run the executable with the list command
+            $cmd = "sudo " . $config['executablePath'] . " -list";
+            if (!empty($config['apiKey'])) {
+                $cmd .= " -apiKey " . escapeshellarg($config['apiKey']);
+            }
+            if (!empty($config['socketPath'])) {
+                $cmd .= " -socketPath " . escapeshellarg($config['socketPath']);
+            }
+
+            if ($debug) error_log("Status check: Executing fallback command: " . preg_replace('/-apiKey\s+[^\s]+/', '-apiKey [REDACTED]', $cmd));
+
+            exec($cmd, $output, $returnCode);
+
+            if ($returnCode === 0) {
+                if ($debug) error_log("Status check: Executable returned success");
+                return [
+                    'running' => true,
+                    'message' => 'Service is running (verified via executable)'
+                ];
+            } else {
+                if ($debug) error_log("Status check: Executable check failed with return code " . $returnCode);
+            }
+        }
+
         return [
             'running' => false,
             'message' => 'No response from service'
         ];
     }
 
-    if ($debug) error_log("Status check: Response received: " . substr($response, 0, 100) . (strlen($response) > 100 ? '...' : ''));
+    if ($debug) {
+        error_log("Status check: Response received: " . substr($response, 0, 100) . (strlen($response) > 100 ? '...' : ''));
+        error_log("Status check: Full response: " . $response);
+    }
 
     // Try to parse the response
     $responseData = @json_decode($response, true);
     if (!$responseData) {
-        if ($debug) error_log("Status check: Invalid response from service");
+        if ($debug) {
+            error_log("Status check: Invalid response from service");
+            error_log("Status check: JSON decode error: " . json_last_error_msg());
+        }
+
+        // Check if the response contains any text that might indicate the service is running
+        // This is a fallback in case the JSON response is malformed but the service is actually running
+        if (strpos($response, 'blocked') !== false || strpos($response, 'list') !== false) {
+            if ($debug) error_log("Status check: Response contains keywords suggesting service is running");
+            return [
+                'running' => true,
+                'message' => 'Service is running (non-JSON response)'
+            ];
+        }
+
         return [
             'running' => false,
-            'message' => 'Invalid response from service'
+            'message' => 'Invalid response from service: ' . json_last_error_msg()
         ];
     }
 

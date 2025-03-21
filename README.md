@@ -242,6 +242,27 @@ The web interface provides a clean, modern design:
 
 **Note**: This is a basic example. In a production environment, you should implement proper authentication for the web interface itself to prevent unauthorized access.
 
+#### Troubleshooting the Web Interface
+
+If the web interface shows "Service Not Running" even though the service is running:
+
+1. Enable debug mode in `config.php`:
+   ```php
+   $config = [
+       // ... other settings ...
+       'debug' => true,
+       // ... other settings ...
+   ];
+   ```
+
+2. Check your web server's error log for detailed messages
+
+3. Common issues:
+   - Socket path mismatch: Make sure the `socketPath` in config.php matches the path used by the service
+   - Permissions: The socket file should have permissions 0666 to allow the web server to access it
+   - API key mismatch: The API key in config.php must match the one used by the service
+   - SELinux: On systems with SELinux, you may need to set appropriate contexts for the socket file
+
 ## Configuration
 
 Apache Block can be configured in two ways:
