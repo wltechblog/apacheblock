@@ -26,6 +26,7 @@ func main() {
 	expPeriod := flag.Duration("expirationPeriod", 5*time.Minute, "Time period to monitor for malicious activity")
 	thresholdFlag := flag.Int("threshold", 3, "Number of suspicious requests to trigger IP blocking")
 	subnetThresholdFlag := flag.Int("subnetThreshold", 3, "Number of IPs from a subnet to trigger subnet blocking")
+	disableSubnetBlockingFlag := flag.Bool("disableSubnetBlocking", false, "Disable automatic subnet blocking")
 	startupLinesFlag := flag.Int("startupLines", 5000, "Number of log lines to process at startup")
 	
 	// Client mode options
@@ -73,6 +74,9 @@ func main() {
 	}
 	if *subnetThresholdFlag != 3 { // Check if user specified a non-default value
 		subnetThreshold = *subnetThresholdFlag
+	}
+	if *disableSubnetBlockingFlag { // Check if user specified to disable subnet blocking
+		disableSubnetBlocking = true
 	}
 	if *startupLinesFlag != 5000 { // Check if user specified a non-default value
 		startupLines = *startupLinesFlag

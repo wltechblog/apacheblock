@@ -38,10 +38,11 @@ var (
 	apiKey                = "" // API key for socket authentication
 	
 	// Configuration variables
-	expirationPeriod time.Duration // Time period to monitor for malicious activity
-	threshold        int           // Number of attempts to trigger blocking
-	subnetThreshold  int           // Number of IPs from a subnet to trigger blocking
-	startupLines     int           // Number of lines to process at startup
+	expirationPeriod      time.Duration // Time period to monitor for malicious activity
+	threshold             int           // Number of attempts to trigger blocking
+	subnetThreshold       int           // Number of IPs from a subnet to trigger blocking
+	disableSubnetBlocking bool          // Whether to disable automatic subnet blocking
+	startupLines          int           // Number of lines to process at startup
 )
 
 // AccessRecord tracks suspicious activity for an IP address

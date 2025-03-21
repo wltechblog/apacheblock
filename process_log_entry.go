@@ -150,7 +150,7 @@ func processLogEntry(line, filePath string, state *FileState) {
 		blockIP(ip, filePath, reason)
 		
 		// Check if we should block the subnet
-		if subnet != "" {
+		if subnet != "" && !disableSubnetBlocking {
 			// Update subnet access count
 			var count int
 			mu.Lock()

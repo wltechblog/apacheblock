@@ -83,6 +83,9 @@ sudo apacheblock -expirationPeriod 10m
 # Set a custom subnet threshold (5 IPs from the same subnet)
 sudo apacheblock -subnetThreshold 5
 
+# Disable automatic subnet blocking
+sudo apacheblock -disableSubnetBlocking
+
 # Process more log lines at startup (10000 lines)
 sudo apacheblock -startupLines 10000
 
@@ -350,6 +353,7 @@ startupLines = 5000
 | `-debug` | `false` | Enable debug mode for basic logging |
 | `-verbose` | `false` | Enable verbose debug mode (logs all processed lines and rule matching) |
 | `-clean` | `false` | Remove all existing port blocking rules |
+| `-disableSubnetBlocking` | `false` | Disable automatic subnet blocking |
 
 ### Client Mode Options
 

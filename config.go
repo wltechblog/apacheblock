@@ -151,6 +151,13 @@ func readConfigFile(configPath string) error {
 			} else {
 				log.Printf("Warning: Invalid subnetThreshold value: %s", value)
 			}
+		case "disableSubnetBlocking":
+			if value == "true" || value == "1" || value == "yes" {
+				disableSubnetBlocking = true
+				if debug {
+					log.Printf("Config: Disabled subnet blocking")
+				}
+			}
 		case "startupLines":
 			var val int
 			if _, err := fmt.Sscanf(value, "%d", &val); err == nil {
@@ -229,6 +236,9 @@ threshold = 3
 
 # Number of IPs from a subnet to trigger subnet blocking
 subnetThreshold = 3
+
+# Disable automatic subnet blocking (true/false)
+disableSubnetBlocking = false
 
 # Number of log lines to process at startup
 startupLines = 5000
