@@ -16,7 +16,7 @@ import (
 func processExistingLogs() {
 	// Track which files we've seen in this run
 	seenFiles := make(map[string]bool)
-	
+
 	// Use logpath instead of hardcoded logDir
 	files, err := filepath.Glob(filepath.Join(logpath, "*"+fileSuffix))
 	if err != nil {
@@ -33,12 +33,12 @@ func processExistingLogs() {
 		if debug {
 			log.Printf("Found log file: %s", file)
 		}
-		
+
 		// Check if we're already monitoring this file
 		stateMutex.Lock()
 		_, exists := fileStates[file]
 		stateMutex.Unlock()
-		
+
 		if !exists {
 			if debug {
 				log.Printf("New log file found: %s", file)
@@ -48,14 +48,14 @@ func processExistingLogs() {
 			log.Printf("Already monitoring log file: %s", file)
 		}
 	}
-	
+
 	// Also check subdirectories if they exist
 	subdirs, err := os.ReadDir(logpath)
 	if err != nil {
 		log.Printf("Failed to read log directory: %v", err)
 		return
 	}
-	
+
 	for _, entry := range subdirs {
 		if entry.IsDir() {
 			subdir := filepath.Join(logpath, entry.Name())
@@ -64,22 +64,22 @@ func processExistingLogs() {
 				log.Printf("Failed to list log files in subdirectory %s: %v", subdir, err)
 				continue
 			}
-			
+
 			if debug && len(subfiles) > 0 {
 				log.Printf("Found %d log files in subdirectory %s", len(subfiles), subdir)
 			}
-			
+
 			for _, file := range subfiles {
 				seenFiles[file] = true
 				if debug {
 					log.Printf("Found log file in subdirectory: %s", file)
 				}
-				
+
 				// Check if we're already monitoring this file
 				stateMutex.Lock()
 				_, exists := fileStates[file]
 				stateMutex.Unlock()
-				
+
 				if !exists {
 					if debug {
 						log.Printf("New log file found in subdirectory: %s", file)
@@ -91,7 +91,7 @@ func processExistingLogs() {
 			}
 		}
 	}
-	
+
 	// Check for files that have been removed
 	stateMutex.Lock()
 	for file := range fileStates {
@@ -112,7 +112,7 @@ func handleLogFile(filePath string) {
 	if !strings.HasSuffix(filePath, fileSuffix) {
 		return
 	}
-	
+
 	// Get file info to check if it's a regular file
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
@@ -121,12 +121,12 @@ func handleLogFile(filePath string) {
 		}
 		return
 	}
-	
+
 	// Skip directories and non-regular files
 	if !fileInfo.Mode().IsRegular() {
 		return
 	}
-	
+
 	stateMutex.Lock()
 	defer stateMutex.Unlock()
 
@@ -144,7 +144,7 @@ func handleLogFile(filePath string) {
 			// Same file, check if it has grown
 			if fileInfo.Size() > state.Size {
 				if debug {
-					log.Printf("File %s has grown from %d to %d bytes", 
+					log.Printf("File %s has grown from %d to %d bytes",
 						filePath, state.Size, fileInfo.Size())
 				}
 				// Update the size and process new content
@@ -206,7 +206,7 @@ func processLogFile(filePath string, state *FileState) {
 		if err := skipToLastLines(state.File, startupLines); err != nil {
 			log.Printf("Error skipping lines for file %s: %v", filePath, err)
 		}
-		
+
 		// Update position after skipping
 		pos, err := state.File.Seek(0, io.SeekCurrent)
 		if err != nil {
@@ -218,35 +218,78 @@ func processLogFile(filePath string, state *FileState) {
 
 	// Process the file
 	reader := bufio.NewReader(state.File)
-	
+
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
 				// Check if file still exists
-				if _, statErr := os.Stat(filePath); os.IsNotExist(statErr) {
+				fileInfo, statErr := os.Stat(filePath)
+				if os.IsNotExist(statErr) {
 					if debug {
 						log.Printf("Log file no longer exists: %s", filePath)
 					}
 					return
 				}
-				
+
+				// Check if the file has been rotated (inode changed)
+				existingFileInfo, err := state.File.Stat()
+				if err != nil {
+					log.Printf("Error getting stats for existing file %s: %v", filePath, err)
+					// File handle is no longer valid, stop monitoring this file
+					return
+				}
+
+				if !os.SameFile(existingFileInfo, fileInfo) {
+					// File has been rotated, close the old file and open the new one
+					if debug {
+						log.Printf("Log file rotated: %s", filePath)
+					}
+
+					// Close the old file
+					state.File.Close()
+
+					// Open the new file
+					newFile, err := os.Open(filePath)
+					if err != nil {
+						log.Printf("Failed to open rotated log file %s: %v", filePath, err)
+						return
+					}
+
+					// Update the file state
+					stateMutex.Lock()
+					state.File = newFile
+					state.Size = fileInfo.Size()
+					state.LastMod = fileInfo.ModTime()
+					state.Position = 0
+					stateMutex.Unlock()
+
+					// Create a new reader for the new file
+					reader = bufio.NewReader(newFile)
+
+					if debug {
+						log.Printf("Reopened rotated log file: %s", filePath)
+					}
+
+					continue
+				}
+
 				// Update position
 				pos, posErr := state.File.Seek(0, io.SeekCurrent)
 				if posErr != nil {
 					log.Printf("Error getting file position: %v", posErr)
 					return
 				}
-				
+
 				stateMutex.Lock()
 				state.Position = pos
 				stateMutex.Unlock()
-				
+
 				// Wait a bit before trying again
 				time.Sleep(1 * time.Second)
 				continue
 			}
-			
+
 			// Some other error occurred
 			log.Printf("Error reading from file %s: %v", filePath, err)
 			time.Sleep(1 * time.Second)
@@ -259,14 +302,14 @@ func processLogFile(filePath string, state *FileState) {
 			log.Printf("Processing log line from %s: %s", filePath, trimmedLine)
 		}
 		processLogEntry(trimmedLine, filePath, state)
-		
+
 		// Update position
 		pos, err := state.File.Seek(0, io.SeekCurrent)
 		if err != nil {
 			log.Printf("Error getting file position: %v", err)
 			return
 		}
-		
+
 		stateMutex.Lock()
 		state.Position = pos
 		stateMutex.Unlock()
@@ -275,36 +318,133 @@ func processLogFile(filePath string, state *FileState) {
 
 // readNewContent reads new content from a file that has grown
 func readNewContent(filePath string, state *FileState) {
+	// Check if the file has been rotated before we start reading
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		log.Printf("Error getting file info for %s: %v", filePath, err)
+		return
+	}
+
+	// Check if the file has been rotated (inode changed)
+	existingFileInfo, err := state.File.Stat()
+	if err != nil {
+		log.Printf("Error getting stats for existing file %s: %v", filePath, err)
+		// File handle is no longer valid
+		return
+	}
+
+	if !os.SameFile(existingFileInfo, fileInfo) {
+		// File has been rotated, close the old file and open the new one
+		if debug {
+			log.Printf("Log file rotated during readNewContent: %s", filePath)
+		}
+
+		// Close the old file
+		state.File.Close()
+
+		// Open the new file
+		newFile, err := os.Open(filePath)
+		if err != nil {
+			log.Printf("Failed to open rotated log file %s: %v", filePath, err)
+			return
+		}
+
+		// Update the file state
+		stateMutex.Lock()
+		state.File = newFile
+		state.Size = fileInfo.Size()
+		state.LastMod = fileInfo.ModTime()
+		state.Position = 0 // Start from the beginning of the new file
+		stateMutex.Unlock()
+
+		if debug {
+			log.Printf("Reopened rotated log file in readNewContent: %s", filePath)
+		}
+
+		// Start a new goroutine to process the file from the beginning
+		go processLogFile(filePath, state)
+		return
+	}
+
 	stateMutex.Lock()
 	// Seek to the last known position
-	_, err := state.File.Seek(state.Position, io.SeekStart)
+	_, err = state.File.Seek(state.Position, io.SeekStart)
 	if err != nil {
 		log.Printf("Error seeking to position %d in file %s: %v", state.Position, filePath, err)
 		stateMutex.Unlock()
 		return
 	}
 	stateMutex.Unlock()
-	
+
 	reader := bufio.NewReader(state.File)
-	
+
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
+				// Check if the file has been rotated
+				currentFileInfo, statErr := os.Stat(filePath)
+				if os.IsNotExist(statErr) {
+					if debug {
+						log.Printf("Log file no longer exists: %s", filePath)
+					}
+					return
+				}
+
+				// Check if the file has been rotated (inode changed)
+				currentExistingFileInfo, err := state.File.Stat()
+				if err != nil {
+					log.Printf("Error getting stats for existing file %s: %v", filePath, err)
+					return
+				}
+
+				if !os.SameFile(currentExistingFileInfo, currentFileInfo) {
+					// File has been rotated, close the old file and open the new one
+					if debug {
+						log.Printf("Log file rotated during EOF in readNewContent: %s", filePath)
+					}
+
+					// Close the old file
+					state.File.Close()
+
+					// Open the new file
+					newFile, err := os.Open(filePath)
+					if err != nil {
+						log.Printf("Failed to open rotated log file %s: %v", filePath, err)
+						return
+					}
+
+					// Update the file state
+					stateMutex.Lock()
+					state.File = newFile
+					state.Size = currentFileInfo.Size()
+					state.LastMod = currentFileInfo.ModTime()
+					state.Position = 0 // Start from the beginning of the new file
+					stateMutex.Unlock()
+
+					if debug {
+						log.Printf("Reopened rotated log file in readNewContent: %s", filePath)
+					}
+
+					// Start a new goroutine to process the file from the beginning
+					go processLogFile(filePath, state)
+					return
+				}
+
 				// Update position
 				pos, posErr := state.File.Seek(0, io.SeekCurrent)
 				if posErr != nil {
 					log.Printf("Error getting file position: %v", posErr)
 					return
 				}
-				
+
 				stateMutex.Lock()
 				state.Position = pos
 				stateMutex.Unlock()
-				
+
 				return
 			}
-			
+
 			log.Printf("Error reading from file %s: %v", filePath, err)
 			return
 		}
@@ -315,14 +455,14 @@ func readNewContent(filePath string, state *FileState) {
 			log.Printf("Processing new log line from %s: %s", filePath, trimmedLine)
 		}
 		processLogEntry(trimmedLine, filePath, state)
-		
+
 		// Update position
 		pos, err := state.File.Seek(0, io.SeekCurrent)
 		if err != nil {
 			log.Printf("Error getting file position: %v", err)
 			return
 		}
-		
+
 		stateMutex.Lock()
 		state.Position = pos
 		stateMutex.Unlock()
@@ -337,7 +477,7 @@ func checkNewSubdirectories(watcher *fsnotify.Watcher) {
 		log.Printf("Warning: Failed to read log directory for subdirectories: %v", err)
 		return
 	}
-	
+
 	for _, entry := range subdirs {
 		if entry.IsDir() {
 			subdir := filepath.Join(logpath, entry.Name())
@@ -369,17 +509,17 @@ func setupLogWatcher() (*fsnotify.Watcher, error) {
 				if !ok {
 					return
 				}
-				
+
 				// Only log file system events in debug mode to reduce noise
 				if debug {
 					log.Printf("File system event: %s on %s", event.Op.String(), event.Name)
 				}
-				
+
 				// Handle file creation and modification
 				if event.Op&fsnotify.Create == fsnotify.Create || event.Op&fsnotify.Write == fsnotify.Write {
 					handleLogFile(event.Name)
 				}
-				
+
 				// Handle file removal or renaming
 				if event.Op&fsnotify.Remove == fsnotify.Remove || event.Op&fsnotify.Rename == fsnotify.Rename {
 					// The file watcher will handle this by detecting EOF and checking if the file exists
@@ -400,7 +540,7 @@ func setupLogWatcher() (*fsnotify.Watcher, error) {
 	if err := watcher.Add(logpath); err != nil {
 		return nil, err
 	}
-	
+
 	// Also watch subdirectories
 	subdirs, err := os.ReadDir(logpath)
 	if err != nil {
@@ -431,7 +571,7 @@ func startPeriodicTasks(watcher *fsnotify.Watcher) {
 		saveBlocklistTicker := time.NewTicker(1 * time.Minute)
 		defer logCheckTicker.Stop()
 		defer saveBlocklistTicker.Stop()
-		
+
 		for {
 			select {
 			case <-logCheckTicker.C:
@@ -442,7 +582,7 @@ func startPeriodicTasks(watcher *fsnotify.Watcher) {
 				checkNewSubdirectories(watcher)
 				// Process existing logs
 				processExistingLogs()
-				
+
 			case <-saveBlocklistTicker.C:
 				if debug {
 					log.Println("Performing periodic blocklist save and cleanup")
