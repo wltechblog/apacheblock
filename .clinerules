@@ -1,0 +1,13 @@
+# Cline Rules for ApacheBlock Project
+
+## Initial Setup (2025-04-01)
+
+-   **Project Goal:** Enhance ApacheBlock to use a reCAPTCHA challenge for blocked IPs instead of a hard firewall drop.
+-   **Memory Bank:** Initialized core Memory Bank files.
+-   **Key Files:** `main.go`, `logmonitor.go`, `firewall.go`, `config.go`, `rules.go`.
+-   **Proposed New File:** `challenge_server.go`.
+-   **Assumptions:**
+    -   Using `iptables` for firewall interaction unless specified otherwise.
+    *   Using Google reCAPTCHA v2 (checkbox).
+    *   SSL certificates will be provided by the administrator in a specified directory.
+-   **Workflow:** Follow Memory Bank procedures. Update documentation (Memory Bank, `.clinerules`) as changes are made or patterns emerge. Commit changes upon task completion. Limit Go files to ~300 lines. Use templates for HTML. Make minimal changes.

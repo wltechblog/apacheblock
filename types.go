@@ -18,31 +18,41 @@ type FileState struct {
 
 // Global variables
 var (
-	mu                sync.Mutex
-	stateMutex        sync.Mutex
-	whitelist         = map[string]bool{}
-	fileSuffix        = "access.log" // Log file suffix
-	debug             = false
-	verbose           = false        // Verbose debug mode
-	ipAccessLog       = make(map[string]*AccessRecord)
-	blockedIPs        = make(map[string]struct{})
-	blockedSubnets    = make(map[string]struct{})
-	subnetBlockedIPs = make(map[string]map[string]struct{}) // maps subnet to set of blocked IPs
-	fileStates        = make(map[string]*FileState)
-	logFormat             string
-	logpath               string
-	whitelistFilePath     = "/etc/apacheblock/whitelist.txt" // Default path for whitelist file
-	domainWhitelistPath   = "/etc/apacheblock/domainwhitelist.txt" // Default path for domain whitelist file
-	blocklistFilePath     = "/etc/apacheblock/blocklist.json" // Default path for blocklist file
-	firewallTable         = "apacheblock" // Name of our custom iptables table
-	apiKey                = "" // API key for socket authentication
-	
-	// Configuration variables
-	expirationPeriod      time.Duration // Time period to monitor for malicious activity
-	threshold             int           // Number of attempts to trigger blocking
-	subnetThreshold       int           // Number of IPs from a subnet to trigger blocking
-	disableSubnetBlocking bool          // Whether to disable automatic subnet blocking
-	startupLines          int           // Number of lines to process at startup
+	mu                  sync.Mutex
+	stateMutex          sync.Mutex
+	whitelist                  = map[string]bool{}
+	fileSuffix                 = "access.log" // Log file suffix
+	debug                      = false
+	verbose                    = false // Verbose debug mode
+	ipAccessLog                = make(map[string]*AccessRecord)
+	blockedIPs                 = make(map[string]struct{})
+	blockedSubnets             = make(map[string]struct{})
+	subnetBlockedIPs           = make(map[string]map[string]struct{}) // maps subnet to set of blocked IPs
+	fileStates                 = make(map[string]*FileState)
+	logFormat           string = "apache"
+	logpath             string = "/var/customers/logs" // Example default, might be overridden
+	whitelistFilePath   string = "/etc/apacheblock/whitelist.txt"
+	domainWhitelistPath string = "/etc/apacheblock/domainwhitelist.txt"
+	blocklistFilePath   string = "/etc/apacheblock/blocklist.json"
+	// rulesFilePath is declared locally in rules.go
+	firewallChain string = "apacheblock" // Renamed from firewallTable
+	firewallType  string = "iptables"    // New: "iptables" or "nftables"
+	apiKey        string = ""
+	// SocketPath is declared locally in socket.go
+
+	// Core Configuration variables
+	expirationPeriod      time.Duration = 5 * time.Minute
+	threshold             int           = 3
+	subnetThreshold       int           = 3
+	disableSubnetBlocking bool          = false
+	startupLines          int           = 5000
+
+	// Challenge Feature Configuration
+	challengeEnable    bool   = false
+	challengePort      int    = 4443 // Default challenge port
+	challengeCertPath  string = "/etc/apacheblock/certs"
+	recaptchaSiteKey   string = ""
+	recaptchaSecretKey string = ""
 )
 
 // AccessRecord tracks suspicious activity for an IP address

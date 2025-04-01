@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -96,10 +97,19 @@ func readConfigFile(configPath string) error {
 			if debug {
 				log.Printf("Config: Set rules to %s", value)
 			}
-		case "table":
-			firewallTable = value
+		case "firewallChain": // Renamed from table
+			firewallChain = value
 			if debug {
-				log.Printf("Config: Set table to %s", value)
+				log.Printf("Config: Set firewallChain to %s", value)
+			}
+		case "firewallType": // New
+			if value == "iptables" || value == "nftables" {
+				firewallType = value
+				if debug {
+					log.Printf("Config: Set firewallType to %s", value)
+				}
+			} else {
+				log.Printf("Warning: Invalid firewallType value: %s (must be 'iptables' or 'nftables')", value)
 			}
 		case "apiKey":
 			apiKey = value
@@ -168,6 +178,45 @@ func readConfigFile(configPath string) error {
 			} else {
 				log.Printf("Warning: Invalid startupLines value: %s", value)
 			}
+			// Challenge Feature Configuration Parsing
+		case "challengeEnable":
+			if bVal, err := strconv.ParseBool(value); err == nil {
+				challengeEnable = bVal
+				if debug {
+					log.Printf("Config: Set challengeEnable to %t", bVal)
+				}
+			} else {
+				log.Printf("Warning: Invalid challengeEnable value: %s (must be true or false)", value)
+			}
+		case "challengePort":
+			if iVal, err := strconv.Atoi(value); err == nil && iVal > 0 && iVal < 65536 {
+				challengePort = iVal
+				if debug {
+					log.Printf("Config: Set challengePort to %d", iVal)
+				}
+			} else {
+				log.Printf("Warning: Invalid challengePort value: %s (must be between 1 and 65535)", value)
+			}
+		case "challengeCertPath":
+			// Basic check if it looks like a path, more robust check might be needed
+			if strings.Contains(value, "/") {
+				challengeCertPath = value
+				if debug {
+					log.Printf("Config: Set challengeCertPath to %s", value)
+				}
+			} else {
+				log.Printf("Warning: Invalid challengeCertPath value: %s", value)
+			}
+		case "recaptchaSiteKey":
+			recaptchaSiteKey = value
+			if debug {
+				log.Printf("Config: Set recaptchaSiteKey") // Don't log the key itself
+			}
+		case "recaptchaSecretKey":
+			recaptchaSecretKey = value
+			if debug {
+				log.Printf("Config: Set recaptchaSecretKey") // Don't log the key itself
+			}
 		default:
 			log.Printf("Warning: Unknown configuration key: %s", key)
 		}
@@ -213,8 +262,11 @@ blocklist = /etc/apacheblock/blocklist.json
 # Path to rules file
 rules = /etc/apacheblock/rules.json
 
-# Name of the iptables chain to use
-table = apacheblock
+# Firewall type: iptables or nftables
+firewallType = iptables
+
+# Name of the firewall chain to use for blocking rules (e.g., iptables chain)
+firewallChain = apacheblock
 
 # API key for socket authentication (leave empty for no authentication)
 apiKey = 
@@ -242,6 +294,25 @@ disableSubnetBlocking = false
 
 # Number of log lines to process at startup
 startupLines = 5000
+
+# --- Challenge Feature Configuration ---
+
+# Enable the reCAPTCHA challenge feature (true/false)
+# If true, instead of dropping traffic, IPs will be redirected to the challengePort.
+challengeEnable = false
+
+# Port for the internal HTTPS challenge server to listen on
+challengePort = 4443
+
+# Path to the directory containing SSL certificates ([domain].key, [domain].crt)
+# ApacheBlock will load certificates dynamically based on the requested domain (SNI).
+challengeCertPath = /etc/apacheblock/certs
+
+# Google reCAPTCHA v2 Site Key (visible in HTML)
+recaptchaSiteKey = YOUR_RECAPTCHA_SITE_KEY
+
+# Google reCAPTCHA v2 Secret Key (keep private)
+recaptchaSecretKey = YOUR_RECAPTCHA_SECRET_KEY
 `
 
 	return os.WriteFile(configPath, []byte(content), 0644)

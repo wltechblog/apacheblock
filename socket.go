@@ -86,7 +86,7 @@ func handleConnection(conn net.Conn) {
 		if debug {
 			log.Printf("Invalid API key received: %s", msg.APIKey)
 		}
-		
+
 		// Send error response
 		response := Message{
 			Command: msg.Command,
@@ -94,7 +94,7 @@ func handleConnection(conn net.Conn) {
 			Result:  "Authentication failed: Invalid API key",
 			Success: false,
 		}
-		
+
 		encoder := json.NewEncoder(conn)
 		if err := encoder.Encode(response); err != nil {
 			log.Printf("Error encoding response: %v", err)
@@ -129,11 +129,24 @@ func processCommand(msg Message) Message {
 		}
 
 	case string(UnblockCommand):
-		if err := clientUnblockIP(msg.Target); err != nil {
-			response.Result = fmt.Sprintf("Failed to unblock %s: %v", msg.Target, err)
+		// First, remove the firewall rule (redirect or block)
+		var unblockErr error
+		if challengeEnable {
+			unblockErr = removeRedirectRule(msg.Target)
 		} else {
-			response.Result = fmt.Sprintf("Successfully unblocked %s", msg.Target)
-			response.Success = true
+			unblockErr = removeBlockRule(msg.Target)
+		}
+
+		if unblockErr != nil {
+			response.Result = fmt.Sprintf("Failed to remove firewall rule for %s: %v", msg.Target, unblockErr)
+		} else {
+			// If firewall rule removed successfully, update the blocklist
+			if err := clientUnblockIP(msg.Target); err != nil { // clientUnblockIP handles blocklist removal
+				response.Result = fmt.Sprintf("Firewall rule removed, but failed to update blocklist for %s: %v", msg.Target, err)
+			} else {
+				response.Result = fmt.Sprintf("Successfully unblocked %s", msg.Target)
+				response.Success = true
+			}
 		}
 
 	case string(CheckCommand):
@@ -156,16 +169,16 @@ func processCommand(msg Message) Message {
 		mu.Lock()
 		ips := make([]string, 0, len(blockedIPs))
 		subnets := make([]string, 0, len(blockedSubnets))
-		
+
 		for ip := range blockedIPs {
 			ips = append(ips, ip)
 		}
-		
+
 		for subnet := range blockedSubnets {
 			subnets = append(subnets, subnet)
 		}
 		mu.Unlock()
-		
+
 		if len(ips) == 0 && len(subnets) == 0 {
 			response.Result = "No IPs or subnets are currently blocked"
 		} else {

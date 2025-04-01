@@ -20,27 +20,27 @@ func main() {
 	domainWhitelistPathFlag := flag.String("domainWhitelist", domainWhitelistPath, "Path to domain whitelist file")
 	blocklistPath := flag.String("blocklist", blocklistFilePath, "Path to blocklist file")
 	rulesPath := flag.String("rules", rulesFilePath, "Path to rules file")
-	tableName := flag.String("table", firewallTable, "Name of the iptables chain to use")
-	
+	tableName := flag.String("table", firewallChain, "Name of the iptables chain to use") // Renamed variable
+
 	// Configuration options
 	expPeriod := flag.Duration("expirationPeriod", 5*time.Minute, "Time period to monitor for malicious activity")
 	thresholdFlag := flag.Int("threshold", 3, "Number of suspicious requests to trigger IP blocking")
 	subnetThresholdFlag := flag.Int("subnetThreshold", 3, "Number of IPs from a subnet to trigger subnet blocking")
 	disableSubnetBlockingFlag := flag.Bool("disableSubnetBlocking", false, "Disable automatic subnet blocking")
 	startupLinesFlag := flag.Int("startupLines", 5000, "Number of log lines to process at startup")
-	
+
 	// Client mode options
 	block := flag.String("block", "", "Block an IP address or CIDR range")
 	unblock := flag.String("unblock", "", "Unblock an IP address or CIDR range")
 	check := flag.String("check", "", "Check if an IP address or CIDR range is blocked")
 	list := flag.Bool("list", false, "List all blocked IPs and subnets")
-	
+
 	// API key for socket authentication
 	apiKeyFlag := flag.String("apiKey", "", "API key for socket authentication")
-	
+
 	// Socket path for client-server communication
 	socketPathFlag := flag.String("socketPath", SocketPath, "Path to the Unix domain socket for client-server communication")
-	
+
 	flag.Parse()
 
 	// First, set debug mode if specified on command line
@@ -48,11 +48,11 @@ func main() {
 		debug = true
 		log.Println("Enabling debug mode from command line")
 	}
-	
+
 	// Read configuration file
 	if err := readConfigFile(*configPath); err != nil {
 		log.Printf("Warning: Failed to read configuration file: %v", err)
-		
+
 		// Create example configuration file if it doesn't exist
 		if _, err := os.Stat(*configPath); os.IsNotExist(err) {
 			if err := createExampleConfigFile(*configPath); err != nil {
@@ -62,9 +62,9 @@ func main() {
 			}
 		}
 	}
-	
+
 	// Command line flags override configuration file settings
-	
+
 	// Set configuration variables from flags
 	if *expPeriod != 5*time.Minute { // Check if user specified a non-default value
 		expirationPeriod = *expPeriod
@@ -87,13 +87,13 @@ func main() {
 		debug = true
 		log.Println("Enabling debug mode from command line")
 	}
-	
+
 	if *Verbose {
 		verbose = true
 		debug = true // Verbose implies debug
 		log.Println("Enabling verbose debug mode from command line")
 	}
-	
+
 	// Set the file paths and table name if specified on command line
 	if *whitelistPath != whitelistFilePath { // Check if user specified a non-default value
 		whitelistFilePath = *whitelistPath
@@ -101,35 +101,35 @@ func main() {
 			log.Println("Setting whitelist path from command line:", whitelistFilePath)
 		}
 	}
-	
+
 	if *domainWhitelistPathFlag != domainWhitelistPath { // Check if user specified a non-default value
 		domainWhitelistPath = *domainWhitelistPathFlag
 		if debug {
 			log.Println("Setting domain whitelist path from command line:", domainWhitelistPath)
 		}
 	}
-	
+
 	if *blocklistPath != blocklistFilePath { // Check if user specified a non-default value
 		blocklistFilePath = *blocklistPath
 		if debug {
 			log.Println("Setting blocklist path from command line:", blocklistFilePath)
 		}
 	}
-	
+
 	if *rulesPath != rulesFilePath { // Check if user specified a non-default value
 		rulesFilePath = *rulesPath
 		if debug {
 			log.Println("Setting rules path from command line:", rulesFilePath)
 		}
 	}
-	
-	if *tableName != firewallTable { // Check if user specified a non-default value
-		firewallTable = *tableName
+
+	if *tableName != firewallChain { // Check if user specified a non-default value // Renamed variable
+		firewallChain = *tableName // Renamed variable
 		if debug {
-			log.Println("Setting firewall table from command line:", firewallTable)
+			log.Println("Setting firewall chain from command line:", firewallChain) // Renamed variable
 		}
 	}
-	
+
 	// Set the API key if provided on command line
 	if *apiKeyFlag != "" {
 		apiKey = *apiKeyFlag
@@ -137,7 +137,7 @@ func main() {
 			log.Println("API key set from command line")
 		}
 	}
-	
+
 	// Set the socket path if provided on command line
 	if *socketPathFlag != SocketPath { // Check if user specified a non-default value
 		SocketPath = *socketPathFlag
@@ -145,7 +145,7 @@ func main() {
 			log.Println("Socket path set from command line:", SocketPath)
 		}
 	}
-	
+
 	// Set server and log path if specified on command line
 	if *server != "apache" || logFormat == "" { // Check if user specified a non-default value or if not set in config
 		if *server == "apache" || *server == "caddy" {
@@ -155,7 +155,7 @@ func main() {
 			}
 		}
 	}
-	
+
 	if *logPath != "/var/customers/logs" || logpath == "" { // Check if user specified a non-default value or if not set in config
 		if _, err := os.Stat(*logPath); err == nil {
 			logpath = *logPath
@@ -164,15 +164,15 @@ func main() {
 			}
 		}
 	}
-	
+
 	// Check if we're in client mode
 	clientMode := *block != "" || *unblock != "" || *check != "" || *list
-	
+
 	if clientMode {
 		// For all client mode commands, try socket first
 		var command ClientCommand
 		var target string
-		
+
 		if *block != "" {
 			command = BlockCommand
 			target = *block
@@ -186,23 +186,23 @@ func main() {
 			command = ListCommand
 			target = ""
 		}
-		
+
 		// Try to send the command to a running server first
 		err := sendCommand(command, target)
 		if err == nil {
 			// Command was successfully sent to the server
 			os.Exit(0)
 		}
-		
+
 		// If socket failed, handle each command appropriately
 		log.Printf("Could not connect to server: %v", err)
 		log.Printf("Executing command directly")
-		
+
 		// Just load the blocklist for all commands
 		if err := loadBlockList(); err != nil {
 			log.Printf("Warning: Failed to load blocklist: %v", err)
 		}
-		
+
 		// Handle each command differently
 		switch command {
 		case CheckCommand:
@@ -218,7 +218,7 @@ func main() {
 		case BlockCommand, UnblockCommand:
 			// For block/unblock, we need to set up the firewall
 			// But only do it once we've confirmed we need to make changes
-			
+
 			// For block, check if already blocked
 			if command == BlockCommand {
 				isBlocked, subnet, err := isIPBlocked(target)
@@ -233,18 +233,18 @@ func main() {
 					}
 					os.Exit(0)
 				}
-				
+
 				// Now we need to set up the firewall
 				if err := setupFirewallTable(); err != nil {
 					log.Fatalf("Error setting up firewall table: %v", err)
 				}
-				
+
 				// Block the IP
 				if err := clientBlockIP(target); err != nil {
 					log.Fatalf("Error blocking IP: %v", err)
 				}
 			}
-			
+
 			// For unblock, check if already unblocked
 			if command == UnblockCommand {
 				isBlocked, _, err := isIPBlocked(target)
@@ -255,39 +255,54 @@ func main() {
 					log.Printf("%s is not blocked", target)
 					os.Exit(0)
 				}
-				
+
 				// Now we need to set up the firewall
 				if err := setupFirewallTable(); err != nil {
 					log.Fatalf("Error setting up firewall table: %v", err)
 				}
-				
-				// Unblock the IP
-				if err := clientUnblockIP(target); err != nil {
-					log.Fatalf("Error unblocking IP: %v", err)
+
+				// Unblock the IP/Subnet
+				var unblockErr error
+				if challengeEnable {
+					// If challenge mode is enabled, we assume we need to remove redirect rules
+					unblockErr = removeRedirectRule(target)
+				} else {
+					// Otherwise, remove the standard block rules
+					unblockErr = removeBlockRule(target)
 				}
+
+				if unblockErr != nil {
+					log.Fatalf("Error removing firewall rule for %s: %v", target, unblockErr)
+				}
+
+				// Also remove from the persistent blocklist
+				if err := clientUnblockIP(target); err != nil { // clientUnblockIP handles blocklist removal
+					log.Fatalf("Error updating blocklist for %s: %v", target, err)
+				}
+				log.Printf("Successfully unblocked %s", target)
 			}
 		}
-		
+
 		os.Exit(0)
 	}
-	
+
 	// Server mode - continue with normal operation
-	
+
 	// Setup our custom firewall table
 	if err := setupFirewallTable(); err != nil {
 		log.Fatalf("Error setting up firewall table: %v", err)
 	}
-	
+
 	// Load the blocklist from file
 	if err := loadBlockList(); err != nil {
 		log.Printf("Warning: Failed to load blocklist: %v", err)
 	}
-	
+
 	// Load the rules from file
 	if err := loadRules(); err != nil {
 		log.Printf("Warning: Failed to load rules: %v", err)
 	}
-	
+
 	if *server == "apache" || *server == "caddy" {
 		logFormat = *server
 	} else {
@@ -302,13 +317,13 @@ func main() {
 	if logFormat == "caddy" {
 		fileSuffix = ".log"
 	}
-	
+
 	// Log configuration settings
 	log.Printf("Configuration: expirationPeriod=%v, threshold=%d, subnetThreshold=%d, startupLines=%d",
 		expirationPeriod, threshold, subnetThreshold, startupLines)
-	log.Printf("Files: whitelist=%s, domain whitelist=%s, blocklist=%s, iptables chain=%s",
-		whitelistFilePath, domainWhitelistPath, blocklistFilePath, firewallTable)
-	
+	log.Printf("Files: whitelist=%s, domain whitelist=%s, blocklist=%s, firewall chain=%s", // Renamed variable
+		whitelistFilePath, domainWhitelistPath, blocklistFilePath, firewallChain) // Renamed variable
+
 	// Determine whitelisted addresses from local interfaces
 	addrs, _ := net.InterfaceAddrs()
 	for _, addr := range addrs {
@@ -319,14 +334,14 @@ func main() {
 			}
 		}
 	}
-	
+
 	// Read whitelist from file
 	if err := readWhitelistFile(whitelistFilePath); err != nil {
 		log.Printf("Warning: Failed to read whitelist file: %v", err)
 	} else {
 		log.Printf("Successfully loaded whitelist from %s", whitelistFilePath)
 	}
-	
+
 	// Read domain whitelist from file
 	if err := readDomainWhitelistFile(domainWhitelistPath); err != nil {
 		log.Printf("Warning: Failed to read domain whitelist file: %v", err)
@@ -341,7 +356,7 @@ func main() {
 		}
 		os.Exit(0)
 	}
-	
+
 	// Apply the blocklist to the firewall
 	if err := applyBlockList(); err != nil {
 		log.Printf("Warning: Failed to apply blocklist: %v", err)
@@ -355,6 +370,9 @@ func main() {
 		log.Printf("Socket server started, client mode commands will be processed by this instance")
 	}
 
+	// Start the challenge server if enabled
+	startChallengeServer()
+
 	// Set up the log file watcher
 	watcher, err := setupLogWatcher()
 	if err != nil {
@@ -367,7 +385,7 @@ func main() {
 
 	// Process existing logs
 	processExistingLogs()
-	
+
 	// Wait forever
 	select {}
 }
