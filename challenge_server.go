@@ -89,22 +89,31 @@ func startChallengeServer() {
 
 	tlsConfig := &tls.Config{
 		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			// Dynamically load certificate based on SNI
-			certPath := filepath.Join(challengeCertPath, hello.ServerName+".crt")
-			keyPath := filepath.Join(challengeCertPath, hello.ServerName+".key")
+			// Dynamically load certificate based on SNI, stripping www. prefix
+			serverName := hello.ServerName
+			baseDomain := serverName
+			if strings.HasPrefix(serverName, "www.") {
+				baseDomain = strings.TrimPrefix(serverName, "www.")
+				if debug {
+					log.Printf("Challenge Server: Stripped 'www.' prefix from SNI '%s', using base domain '%s'", serverName, baseDomain)
+				}
+			}
+
+			certPath := filepath.Join(challengeCertPath, baseDomain+".crt")
+			keyPath := filepath.Join(challengeCertPath, baseDomain+".key")
 
 			if debug {
-				log.Printf("Challenge Server: Attempting to load cert for %s from %s and %s", hello.ServerName, certPath, keyPath)
+				log.Printf("Challenge Server: Attempting to load cert for SNI '%s' (using base domain '%s') from %s and %s", serverName, baseDomain, certPath, keyPath)
 			}
 
 			cert, err := tls.LoadX509KeyPair(certPath, keyPath)
 			if err != nil {
-				log.Printf("Challenge Server: Failed to load key pair for %s: %v", hello.ServerName, err)
+				log.Printf("Challenge Server: Failed to load key pair for SNI '%s' (using base domain '%s'): %v", serverName, baseDomain, err)
 				// Fallback or default certificate could be loaded here if desired
-				return nil, fmt.Errorf("certificate unavailable for %s", hello.ServerName)
+				return nil, fmt.Errorf("certificate unavailable for %s (base domain %s)", serverName, baseDomain)
 			}
 			if debug {
-				log.Printf("Challenge Server: Successfully loaded cert for %s", hello.ServerName)
+				log.Printf("Challenge Server: Successfully loaded cert for SNI '%s' (using base domain '%s')", serverName, baseDomain)
 			}
 			return &cert, nil
 		},
