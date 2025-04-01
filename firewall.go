@@ -274,7 +274,7 @@ func addRedirectRule(target string) error {
 	return nil // Assuming partial success is acceptable for now
 }
 
-// removeRedirectRule removes an iptables rule that redirects traffic from the target IP
+// removeRedirectRule removes iptables rules that redirect traffic from the target IP
 func removeRedirectRule(target string) error {
 	if firewallType != "iptables" {
 		return fmt.Errorf("redirect rules currently only supported for iptables firewallType")
@@ -286,39 +286,74 @@ func removeRedirectRule(target string) error {
 
 	challengePortStr := fmt.Sprintf("%d", challengePort)
 
-	// Commands to remove REDIRECT rules from the nat table's PREROUTING chain
-	cmds := [][]string{
-		{"iptables", "-w", "-t", "nat", "-D", "PREROUTING", "-s", target, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", challengePortStr},
-		{"iptables", "-w", "-t", "nat", "-D", "PREROUTING", "-s", target, "-p", "tcp", "--dport", "443", "-j", "REDIRECT", "--to-port", challengePortStr},
+	// Define the rule specifications (without -C or -D)
+	ruleSpecs := [][]string{
+		// Port 80 rule spec
+		{"-t", "nat", "-s", target, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", challengePortStr},
+		// Port 443 rule spec
+		{"-t", "nat", "-s", target, "-p", "tcp", "--dport", "443", "-j", "REDIRECT", "--to-port", challengePortStr},
 	}
 
-	var lastErr error
-	for _, cmdArgs := range cmds {
-		// Check if the rule exists before trying to remove it
-		checkArgs := append([]string{"-w", "-t", "nat", "-C"}, cmdArgs[3:]...) // Replace -D with -C
-		checkCmd := exec.Command("iptables", checkArgs...)
-		if err := checkCmd.Run(); err != nil {
-			if debug {
-				log.Printf("Redirect rule does not exist, skipping removal: %v", cmdArgs)
+	var errors []string
+	rulesRemoved := 0
+
+	for _, spec := range ruleSpecs {
+		// Check if the rule exists using the exact specification
+		// We loop checking and deleting because there might be duplicate rules if something went wrong before.
+		for {
+			checkArgs := append([]string{"-w", "-C", "PREROUTING"}, spec...)
+			checkCmd := exec.Command("iptables", checkArgs...)
+			err := checkCmd.Run()
+
+			if err != nil {
+				// Rule doesn't exist (or another check error occurred)
+				if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+					// Exit code 1 from -C means rule not found, which is expected after successful deletion or if it never existed.
+					if debug && rulesRemoved == 0 { // Only log "not found" if we haven't removed any rule with this spec yet
+						log.Printf("Redirect rule spec not found, skipping removal: iptables %v", checkArgs)
+					}
+				} else {
+					// Different error during check
+					errMsg := fmt.Sprintf("error checking redirect rule %v: %v", checkArgs, err)
+					log.Println(errMsg)
+					// errors = append(errors, errMsg) // Optionally report check errors
+				}
+				break // Stop trying to delete this specific rule spec
 			}
-			continue // Rule doesn't exist, skip removing
-		}
 
-		// Rule exists, remove it
-		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			// Log failure but continue to try removing the other rule
-			log.Printf("Failed to remove redirect rule %v: %v, output: %s", cmdArgs, err, string(output))
-			lastErr = err // Keep track of the last error
-		} else if debug {
-			log.Printf("Successfully removed redirect rule: %v", cmdArgs)
+			// Rule exists, attempt to delete it
+			deleteArgs := append([]string{"-w", "-D", "PREROUTING"}, spec...)
+			deleteCmd := exec.Command("iptables", deleteArgs...)
+			output, deleteErr := deleteCmd.CombinedOutput()
+
+			if deleteErr != nil {
+				errMsg := fmt.Sprintf("failed to remove redirect rule %v: %v, output: %s", deleteArgs, deleteErr, string(output))
+				log.Println(errMsg)
+				errors = append(errors, errMsg)
+				break // Stop trying to delete this spec if an error occurs
+			} else {
+				if debug {
+					log.Printf("Successfully removed redirect rule instance: %v", deleteArgs)
+				}
+				rulesRemoved++
+				// Loop again to check if there are more duplicate rules with the same spec
+			}
 		}
 	}
-	if lastErr == nil {
-		log.Printf("Removed redirect rules for %s", target)
+
+	if len(errors) > 0 {
+		return fmt.Errorf("encountered errors removing redirect rules for %s: %s", target, strings.Join(errors, "; "))
 	}
-	return lastErr // Return the last error encountered, if any
+
+	if rulesRemoved > 0 {
+		log.Printf("Successfully removed %d redirect rule instance(s) for %s", rulesRemoved, target)
+	} else {
+		if debug {
+			log.Printf("No redirect rules found or removed for %s", target)
+		}
+	}
+
+	return nil // Success if no errors occurred during deletion attempts
 }
 
 // removeBlockRule removes a block rule for an IP or subnet from our custom chain
