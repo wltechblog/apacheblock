@@ -168,6 +168,11 @@ func handleChallengeRequest(w http.ResponseWriter, r *http.Request) {
 		ErrorMessage:     r.URL.Query().Get("error"), // Get error from query param
 	}
 
+	// Set cache-control headers
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	err := compiledTemplate.Execute(w, data)
 	if err != nil {
@@ -232,7 +237,10 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Optional: Add to temporary whitelist? (Requires changes in whitelist.go)
 
-	// Display success message
+	// Display success message with cache-control headers
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `
         <!DOCTYPE html>
