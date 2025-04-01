@@ -217,6 +217,15 @@ func readConfigFile(configPath string) error {
 			if debug {
 				log.Printf("Config: Set recaptchaSecretKey") // Don't log the key itself
 			}
+		case "challengeTempWhitelistDuration":
+			if duration, err := time.ParseDuration(value); err == nil {
+				challengeTempWhitelistDuration = duration
+				if debug {
+					log.Printf("Config: Set challengeTempWhitelistDuration to %v", duration)
+				}
+			} else {
+				log.Printf("Warning: Invalid challengeTempWhitelistDuration value: %s", value)
+			}
 		default:
 			log.Printf("Warning: Unknown configuration key: %s", key)
 		}
@@ -313,6 +322,9 @@ recaptchaSiteKey = YOUR_RECAPTCHA_SITE_KEY
 
 # Google reCAPTCHA v2 Secret Key (keep private)
 recaptchaSecretKey = YOUR_RECAPTCHA_SECRET_KEY
+
+# Duration for which an IP remains whitelisted after solving a challenge (e.g., 5m, 1h)
+challengeTempWhitelistDuration = 5m
 `
 
 	return os.WriteFile(configPath, []byte(content), 0644)

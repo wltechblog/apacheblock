@@ -9,7 +9,7 @@ import (
 func processLogEntry(line, filePath string, state *FileState) {
 	// Extract timestamp from the log entry
 	timestamp, hasTimestamp := extractTimestamp(line, logFormat)
-	
+
 	// Skip processing if this entry is older than the last processed entry
 	if hasTimestamp && state != nil && !isNewerThan(timestamp, state.LastTimestamp) {
 		if verbose {
@@ -18,14 +18,14 @@ func processLogEntry(line, filePath string, state *FileState) {
 		}
 		return
 	}
-	
+
 	// Use the rules system to match the log entry
 	ip, reason, matched := matchRule(line, logFormat)
-	
+
 	if !matched {
 		return
 	}
-	
+
 	// Skip if this is the same IP we just processed (helps avoid duplicates)
 	if state != nil && ip == state.LastProcessedIP && !state.LastTimestamp.IsZero() {
 		if verbose {
@@ -33,7 +33,7 @@ func processLogEntry(line, filePath string, state *FileState) {
 		}
 		return
 	}
-	
+
 	// Check IP whitelist
 	if isWhitelisted(ip) {
 		if debug {
@@ -41,7 +41,7 @@ func processLogEntry(line, filePath string, state *FileState) {
 		}
 		return
 	}
-	
+
 	// Check domain whitelist
 	if isDomainWhitelisted(ip) {
 		if debug {
@@ -49,28 +49,36 @@ func processLogEntry(line, filePath string, state *FileState) {
 		}
 		return
 	}
-	
+
+	// Check temporary challenge whitelist
+	if isTempWhitelisted(ip) {
+		if debug {
+			log.Printf("IP %s is temporarily whitelisted after challenge, ignoring", ip)
+		}
+		return
+	}
+
 	// Check if IP or subnet is already blocked
 	ipBlocked := false
 	subnetBlocked := false
 	subnet := getSubnet(ip)
-	
+
 	mu.Lock()
 	if _, blocked := blockedIPs[ip]; blocked {
 		ipBlocked = true
 	}
-	
+
 	if _, blocked := blockedSubnets[subnet]; blocked {
 		subnetBlocked = true
 	}
 	mu.Unlock()
-	
+
 	// If the IP is already blocked, just log it in debug mode and return
 	if ipBlocked {
 		if debug {
 			log.Printf("IP %s is already blocked, skipping", ip)
 		}
-		
+
 		// Update the timestamp and IP in the file state
 		if hasTimestamp && state != nil {
 			stateMutex.Lock()
@@ -78,16 +86,16 @@ func processLogEntry(line, filePath string, state *FileState) {
 			state.LastProcessedIP = ip
 			stateMutex.Unlock()
 		}
-		
+
 		return
 	}
-	
+
 	// If the subnet is already blocked, just log it in debug mode and return
 	if subnetBlocked {
 		if debug {
 			log.Printf("Subnet %s containing IP %s is already blocked, skipping", subnet, ip)
 		}
-		
+
 		// Update the timestamp and IP in the file state
 		if hasTimestamp && state != nil {
 			stateMutex.Lock()
@@ -95,10 +103,10 @@ func processLogEntry(line, filePath string, state *FileState) {
 			state.LastProcessedIP = ip
 			stateMutex.Unlock()
 		}
-		
+
 		return
 	}
-	
+
 	// Log the rule match
 	if debug {
 		log.Printf("Rule match: IP=%s, Reason=%s, File=%s", ip, reason, filePath)
@@ -135,7 +143,7 @@ func processLogEntry(line, filePath string, state *FileState) {
 			record.Reason = reason
 			record.LastUpdated = now
 			record.ExpiresAt = now.Add(ruleDuration)
-			
+
 			// If the old count was higher, keep it
 			if oldCount > record.Count {
 				record.Count = oldCount
@@ -148,39 +156,39 @@ func processLogEntry(line, filePath string, state *FileState) {
 	if record.Count >= ruleThreshold {
 		// Block the IP
 		blockIP(ip, filePath, reason)
-		
+
 		// Check if we should block the subnet
 		if subnet != "" && !disableSubnetBlocking {
-// Update subnet blocked IPs
-mu.Lock()
-if subnetBlockedIPs[subnet] == nil {
-    subnetBlockedIPs[subnet] = make(map[string]struct{})
-}
-subnetBlockedIPs[subnet][ip] = struct{}{}
-count := len(subnetBlockedIPs[subnet])
-mu.Unlock()
+			// Update subnet blocked IPs
+			mu.Lock()
+			if subnetBlockedIPs[subnet] == nil {
+				subnetBlockedIPs[subnet] = make(map[string]struct{})
+			}
+			subnetBlockedIPs[subnet][ip] = struct{}{}
+			count := len(subnetBlockedIPs[subnet])
+			mu.Unlock()
 
-if debug {
-    log.Printf("Subnet %s has %d/%d unique IPs blocked", 
-        subnet, count, subnetThreshold)
-}
+			if debug {
+				log.Printf("Subnet %s has %d/%d unique IPs blocked",
+					subnet, count, subnetThreshold)
+			}
 
-if count >= subnetThreshold {
-    blockSubnet(subnet)
-}
+			if count >= subnetThreshold {
+				blockSubnet(subnet)
+			}
 		}
 	} else if debug {
 		log.Printf("IP %s has %d/%d suspicious requests (%s)",
 			ip, record.Count, ruleThreshold, record.Reason)
 	}
-	
+
 	// Update the timestamp and IP in the file state
 	if hasTimestamp && state != nil {
 		stateMutex.Lock()
 		state.LastTimestamp = timestamp
 		state.LastProcessedIP = ip
 		stateMutex.Unlock()
-		
+
 		if verbose {
 			log.Printf("Updated last processed timestamp to %s for file %s",
 				timestamp.Format(time.RFC3339), filePath)

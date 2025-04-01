@@ -593,7 +593,13 @@ func startPeriodicTasks(watcher *fsnotify.Watcher) {
 				}
 				// Clean up expired records
 				cleanupExpiredRecords()
+				// Clean up expired temporary whitelist entries
+				cleanupTempWhitelist()
 			}
 		}
 	}()
+
+	// Start the temporary whitelist cleanup task separately
+	// as it might need a different interval or run immediately
+	startTempWhitelistCleanupTask()
 }

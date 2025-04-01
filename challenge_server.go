@@ -235,7 +235,8 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Successfully removed redirect rule for %s", clientIP)
 
-	// Optional: Add to temporary whitelist? (Requires changes in whitelist.go)
+	// Add IP to temporary whitelist
+	addTempWhitelist(clientIP)
 
 	// Display success message with cache-control headers
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")

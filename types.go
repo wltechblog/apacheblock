@@ -48,12 +48,22 @@ var (
 	startupLines          int           = 5000
 
 	// Challenge Feature Configuration
-	challengeEnable    bool   = false
-	challengePort      int    = 4443 // Default challenge port
-	challengeCertPath  string = "/etc/apacheblock/certs"
-	recaptchaSiteKey   string = ""
-	recaptchaSecretKey string = ""
+	challengeEnable                bool          = false
+	challengePort                  int           = 4443 // Default challenge port
+	challengeCertPath              string        = "/etc/apacheblock/certs"
+	recaptchaSiteKey               string        = ""
+	recaptchaSecretKey             string        = ""
+	challengeTempWhitelistDuration time.Duration = 5 * time.Minute // New: Duration for temp whitelist
+
+	// Internal State (Temporary Whitelist)
+	tempWhitelist      map[string]time.Time // Map IP to expiry time
+	tempWhitelistMutex sync.Mutex           // Mutex for temporary whitelist map
 )
+
+func init() {
+	// Initialize maps
+	tempWhitelist = make(map[string]time.Time)
+}
 
 // AccessRecord tracks suspicious activity for an IP address
 type AccessRecord struct {
