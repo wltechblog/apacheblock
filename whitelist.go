@@ -20,7 +20,7 @@ func readWhitelistFile(filePath string) error {
 		}
 		log.Printf("Created directory %s for whitelist file", dir)
 	}
-	
+
 	// Check if the file exists
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		log.Printf("Whitelist file %s does not exist, creating example file", filePath)
@@ -41,12 +41,12 @@ func readWhitelistFile(filePath string) error {
 	for scanner.Scan() {
 		lineNum++
 		line := strings.TrimSpace(scanner.Text())
-		
+
 		// Skip empty lines and comments
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		
+
 		// Validate IP address
 		ip := net.ParseIP(line)
 		if ip == nil {
@@ -58,11 +58,13 @@ func readWhitelistFile(filePath string) error {
 			}
 			// For CIDR notation, we store the network address
 			whitelist[ipNet.String()] = true
+			// Log add only in debug
 			if debug {
 				log.Printf("Added subnet %s to whitelist", ipNet.String())
 			}
 		} else {
 			whitelist[ip.String()] = true
+			// Log add only in debug
 			if debug {
 				log.Printf("Added IP %s to whitelist", ip.String())
 			}
@@ -72,7 +74,7 @@ func readWhitelistFile(filePath string) error {
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("error reading whitelist file: %v", err)
 	}
-	
+
 	return nil
 }
 
@@ -99,12 +101,13 @@ func createExampleWhitelistFile(filePath string) error {
 func isWhitelisted(ip string) bool {
 	// Check if IP is directly whitelisted
 	if _, whitelisted := whitelist[ip]; whitelisted {
+		// Log skip only in debug
 		if debug {
 			log.Printf("IP %s is whitelisted, skipping", ip)
 		}
 		return true
 	}
-	
+
 	// Check if IP is in a whitelisted CIDR range
 	ipAddr := net.ParseIP(ip)
 	if ipAddr != nil {
@@ -113,6 +116,7 @@ func isWhitelisted(ip string) bool {
 			if strings.Contains(cidr, "/") {
 				_, ipNet, err := net.ParseCIDR(cidr)
 				if err == nil && ipNet.Contains(ipAddr) {
+					// Log skip only in debug
 					if debug {
 						log.Printf("IP %s is in whitelisted CIDR %s, skipping", ip, cidr)
 					}
@@ -121,6 +125,6 @@ func isWhitelisted(ip string) bool {
 			}
 		}
 	}
-	
+
 	return false
 }

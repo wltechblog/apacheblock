@@ -20,7 +20,7 @@ type Rule struct {
 	Threshold   int           `json:"threshold"`   // Number of matches to trigger blocking
 	Duration    time.Duration `json:"duration"`    // Time window for threshold (e.g., "5m")
 	Enabled     bool          `json:"enabled"`     // Whether the rule is enabled
-	
+
 	// Compiled regex (not stored in JSON)
 	compiledRegex *regexp.Regexp
 }
@@ -48,7 +48,7 @@ func loadRules() error {
 			return fmt.Errorf("failed to create directory %s: %v", dir, err)
 		}
 	}
-	
+
 	// Check if the file exists
 	if _, err := os.Stat(rulesFilePath); os.IsNotExist(err) {
 		log.Printf("Rules file %s does not exist, creating default rules", rulesFilePath)
@@ -56,38 +56,41 @@ func loadRules() error {
 			return fmt.Errorf("failed to create default rules file: %v", err)
 		}
 	}
-	
+
 	// Read the file
 	data, err := os.ReadFile(rulesFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to read rules file: %v", err)
 	}
-	
+
 	// Unmarshal JSON
 	var ruleSet RuleSet
 	if err := json.Unmarshal(data, &ruleSet); err != nil {
 		return fmt.Errorf("failed to unmarshal rules: %v", err)
 	}
-	
+
 	// Compile regexes
 	for i := range ruleSet.Rules {
 		if !ruleSet.Rules[i].Enabled {
 			continue
 		}
-		
+
 		regex, err := regexp.Compile(ruleSet.Rules[i].Regex)
 		if err != nil {
 			log.Printf("Warning: Invalid regex in rule %s: %v", ruleSet.Rules[i].Name, err)
 			continue
 		}
-		
+
 		ruleSet.Rules[i].compiledRegex = regex
 	}
-	
+
 	// Set the global rules
 	rules = ruleSet.Rules
-	
-	log.Printf("Loaded %d rules from %s", len(rules), rulesFilePath)
+
+	// Log success only in debug
+	if debug {
+		log.Printf("Loaded %d rules from %s", len(rules), rulesFilePath)
+	}
 	return nil
 }
 
@@ -97,37 +100,37 @@ func createDefaultRulesFile() error {
 	defaultRules := RuleSet{
 		Rules: []Rule{
 			{
-Name:        "Apache PHP 403/404",
-Description: "Detects requests to PHP files resulting in 403 or 404 status codes in Apache logs",
-LogFormat:   "apache",
-Regex:       `^([\d\.]+) .* "(?:GET|POST|HEAD) /[^?\s]*\.php(?:\?[^\s]*)?(?:\s+HTTP/[\d\.]+)" (403|404) .*`,
+				Name:        "Apache PHP 403/404",
+				Description: "Detects requests to PHP files resulting in 403 or 404 status codes in Apache logs",
+				LogFormat:   "apache",
+				Regex:       `^([\d\.]+) .* "(?:GET|POST|HEAD) /[^?\s]*\.php(?:\?[^\s]*)?(?:\s+HTTP/[\d\.]+)" (403|404) .*`,
 				Threshold:   3,
 				Duration:    5 * time.Minute,
 				Enabled:     true,
 			},
 			{
-Name:        "PHP File Redirects",
-Description: "Detects direct PHP file access resulting in redirects",
-LogFormat:   "apache",
-Regex:       `^([\d\.]+) .* "(?:GET|POST|HEAD) /[^?\s]*\.php(?:\?[^\s]*)?(?:\s+HTTP/[\d\.]+)" 301 .*`,
+				Name:        "PHP File Redirects",
+				Description: "Detects direct PHP file access resulting in redirects",
+				LogFormat:   "apache",
+				Regex:       `^([\d\.]+) .* "(?:GET|POST|HEAD) /[^?\s]*\.php(?:\?[^\s]*)?(?:\s+HTTP/[\d\.]+)" 301 .*`,
 				Threshold:   3,
 				Duration:    5 * time.Minute,
 				Enabled:     true,
 			},
 			{
-Name:        "Caddy PHP 403/404",
-Description: "Detects requests to PHP files resulting in 403 or 404 status codes in Caddy logs",
-LogFormat:   "caddy",
-Regex:       `.*\.php(?:\?|/|$).*`,
+				Name:        "Caddy PHP 403/404",
+				Description: "Detects requests to PHP files resulting in 403 or 404 status codes in Caddy logs",
+				LogFormat:   "caddy",
+				Regex:       `.*\.php(?:\?|/|$).*`,
 				Threshold:   3,
 				Duration:    5 * time.Minute,
 				Enabled:     true,
 			},
 			{
-Name:        "Caddy PHP Redirects",
-Description: "Detects requests to PHP files resulting in 301 redirects in Caddy logs",
-LogFormat:   "caddy",
-Regex:       `.*\.php(?:\?|/|$).*`,
+				Name:        "Caddy PHP Redirects",
+				Description: "Detects requests to PHP files resulting in 301 redirects in Caddy logs",
+				LogFormat:   "caddy",
+				Regex:       `.*\.php(?:\?|/|$).*`,
 				Threshold:   3,
 				Duration:    5 * time.Minute,
 				Enabled:     true,
@@ -161,56 +164,64 @@ Regex:       `.*\.php(?:\?|/|$).*`,
 			},
 		},
 	}
-	
+
 	// Marshal to JSON
 	data, err := json.MarshalIndent(defaultRules, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal default rules: %v", err)
 	}
-	
+
 	// Write to file
 	if err := os.WriteFile(rulesFilePath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write default rules file: %v", err)
 	}
-	
-	log.Printf("Created default rules file at %s", rulesFilePath)
+
+	// Log success only in debug
+	if debug {
+		log.Printf("Created default rules file at %s", rulesFilePath)
+	}
 	return nil
 }
 
 // matchRule checks if a log line matches a rule and returns the IP address and reason if it does
 func matchRule(line string, format string) (string, string, bool) {
+	// Log matching start only in verbose
 	if verbose {
 		log.Printf("Matching rules for log format: %s", format)
 	}
-	
+
 	for _, rule := range rules {
 		// Skip rules that don't apply to this log format
 		if rule.LogFormat != "all" && rule.LogFormat != format {
+			// Log skip only in verbose
 			if verbose {
 				log.Printf("Skipping rule %s (format mismatch: %s)", rule.Name, rule.LogFormat)
 			}
 			continue
 		}
-		
+
 		// Skip disabled rules
 		if !rule.Enabled || rule.compiledRegex == nil {
+			// Log skip only in verbose
 			if verbose {
 				log.Printf("Skipping rule %s (disabled or invalid regex)", rule.Name)
 			}
 			continue
 		}
-		
+
+		// Log trying rule only in verbose
 		if verbose {
 			log.Printf("Trying rule %s with regex: %s", rule.Name, rule.Regex)
 		}
-		
+
 		// Check if the line matches the rule
 		matches := rule.compiledRegex.FindStringSubmatch(line)
 		if matches != nil {
+			// Log match details only in verbose
 			if verbose {
 				log.Printf("Rule %s matched! Capture groups: %v", rule.Name, matches)
 			}
-			
+
 			// For Apache-style rules, the IP is typically the first capture group
 			if format == "apache" && len(matches) > 1 {
 				ip := matches[1]
@@ -218,46 +229,49 @@ func matchRule(line string, format string) (string, string, bool) {
 				if len(matches) > 2 {
 					reason += " " + matches[2]
 				}
-				
+
+				// Log specific match details only in verbose
 				if verbose {
 					log.Printf("Apache match: IP=%s, Reason=%s", ip, reason)
 				}
-				
+
 				return ip, reason, true
 			}
-			
+
 			// For Caddy, we need to parse the JSON to get the IP
 			if format == "caddy" {
 				var entry CaddyLogEntry
 				if err := json.Unmarshal([]byte(line), &entry); err == nil {
 					// Check if the URI matches our rule (already confirmed by regex)
 					// Include 301 status code for redirect detection
-					if (entry.Status == 403 || entry.Status == 404 || entry.Status == 301) && 
-					   entry.Request.ClientIP != "" {
+					if (entry.Status == 403 || entry.Status == 404 || entry.Status == 301) &&
+						entry.Request.ClientIP != "" {
 						reason := rule.Name + " " + fmt.Sprint(entry.Status)
-						
+
+						// Log specific match details only in verbose
 						if verbose {
 							log.Printf("Caddy match: IP=%s, Reason=%s", entry.Request.ClientIP, reason)
 						}
-						
+
 						return entry.Request.ClientIP, reason, true
-					} else if verbose {
-						log.Printf("Caddy match but status (%d) or ClientIP (%s) not valid", 
+					} else if verbose { // Log invalid status/IP only in verbose
+						log.Printf("Caddy match but status (%d) or ClientIP (%s) not valid",
 							entry.Status, entry.Request.ClientIP)
 					}
-				} else if verbose {
+				} else if verbose { // Log JSON parse error only in verbose
 					log.Printf("Failed to parse Caddy JSON: %v", err)
 				}
 			}
-		} else if verbose {
+		} else if verbose { // Log non-match only in verbose
 			log.Printf("Rule %s did not match", rule.Name)
 		}
 	}
-	
+
+	// Log no match only in verbose
 	if verbose {
 		log.Printf("No rules matched for this line")
 	}
-	
+
 	return "", "", false
 }
 
@@ -268,7 +282,7 @@ func getRuleThreshold(ruleName string) (int, time.Duration) {
 			return rule.Threshold, rule.Duration
 		}
 	}
-	
+
 	// Default values if rule not found
 	return threshold, expirationPeriod
 }

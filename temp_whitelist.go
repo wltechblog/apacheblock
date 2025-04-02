@@ -16,6 +16,7 @@ func addTempWhitelist(ip string) {
 	tempWhitelist[ip] = expiry
 	tempWhitelistMutex.Unlock()
 
+	// Log add only in debug
 	if debug {
 		log.Printf("Added %s to temporary whitelist until %s", ip, expiry.Format(time.RFC3339))
 	}
@@ -32,6 +33,7 @@ func isTempWhitelisted(ip string) bool {
 	tempWhitelistMutex.Unlock()
 
 	if exists && time.Now().Before(expiry) {
+		// Log find only in debug
 		if debug {
 			log.Printf("IP %s found in temporary whitelist (expires %s)", ip, expiry.Format(time.RFC3339))
 		}
@@ -60,6 +62,7 @@ func cleanupTempWhitelist() {
 	}
 	tempWhitelistMutex.Unlock()
 
+	// Log cleanup count only in debug
 	if cleanedCount > 0 && debug {
 		log.Printf("Cleaned up %d expired entries from temporary whitelist", cleanedCount)
 	}
@@ -83,5 +86,8 @@ func startTempWhitelistCleanupTask() {
 		}
 	}()
 
-	log.Println("Started periodic temporary whitelist cleanup task.")
+	// Log task start only in debug
+	if debug {
+		log.Println("Started periodic temporary whitelist cleanup task.")
+	}
 }

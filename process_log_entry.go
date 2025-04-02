@@ -12,10 +12,10 @@ func processLogEntry(line, filePath string, state *FileState) {
 
 	// Skip processing if this entry is older than the last processed entry
 	if hasTimestamp && state != nil && !isNewerThan(timestamp, state.LastTimestamp) {
-		if verbose {
-			log.Printf("Skipping older log entry: %s (timestamp: %s, last processed: %s)",
-				line, timestamp.Format(time.RFC3339), state.LastTimestamp.Format(time.RFC3339))
-		}
+		// if verbose { // This can be very noisy
+		// 	log.Printf("Skipping older log entry: %s (timestamp: %s, last processed: %s)",
+		// 		line, timestamp.Format(time.RFC3339), state.LastTimestamp.Format(time.RFC3339))
+		// }
 		return
 	}
 
@@ -28,9 +28,7 @@ func processLogEntry(line, filePath string, state *FileState) {
 
 	// Skip if this is the same IP we just processed (helps avoid duplicates)
 	if state != nil && ip == state.LastProcessedIP && !state.LastTimestamp.IsZero() {
-		if verbose {
-			log.Printf("Skipping duplicate IP: %s (already processed)", ip)
-		}
+		// if verbose { log.Printf("Skipping duplicate IP: %s (already processed)", ip) } // Less important
 		return
 	}
 
@@ -38,7 +36,7 @@ func processLogEntry(line, filePath string, state *FileState) {
 	if isWhitelisted(ip) {
 		if debug {
 			log.Printf("IP %s is whitelisted, ignoring", ip)
-		}
+		} // Log skip in debug
 		return
 	}
 
@@ -46,7 +44,7 @@ func processLogEntry(line, filePath string, state *FileState) {
 	if isDomainWhitelisted(ip) {
 		if debug {
 			log.Printf("IP %s belongs to a whitelisted domain, ignoring", ip)
-		}
+		} // Log skip in debug
 		return
 	}
 
@@ -54,7 +52,7 @@ func processLogEntry(line, filePath string, state *FileState) {
 	if isTempWhitelisted(ip) {
 		if debug {
 			log.Printf("IP %s is temporarily whitelisted after challenge, ignoring", ip)
-		}
+		} // Log skip in debug
 		return
 	}
 
@@ -67,7 +65,6 @@ func processLogEntry(line, filePath string, state *FileState) {
 	if _, blocked := blockedIPs[ip]; blocked {
 		ipBlocked = true
 	}
-
 	if _, blocked := blockedSubnets[subnet]; blocked {
 		subnetBlocked = true
 	}
@@ -77,16 +74,14 @@ func processLogEntry(line, filePath string, state *FileState) {
 	if ipBlocked {
 		if debug {
 			log.Printf("IP %s is already blocked, skipping", ip)
-		}
-
-		// Update the timestamp and IP in the file state
+		} // Log skip in debug
+		// Update the timestamp and IP in the file state (only if needed for logic, not just logging)
 		if hasTimestamp && state != nil {
 			stateMutex.Lock()
 			state.LastTimestamp = timestamp
 			state.LastProcessedIP = ip
 			stateMutex.Unlock()
 		}
-
 		return
 	}
 
@@ -94,23 +89,19 @@ func processLogEntry(line, filePath string, state *FileState) {
 	if subnetBlocked {
 		if debug {
 			log.Printf("Subnet %s containing IP %s is already blocked, skipping", subnet, ip)
-		}
-
-		// Update the timestamp and IP in the file state
+		} // Log skip in debug
+		// Update the timestamp and IP in the file state (only if needed for logic, not just logging)
 		if hasTimestamp && state != nil {
 			stateMutex.Lock()
 			state.LastTimestamp = timestamp
 			state.LastProcessedIP = ip
 			stateMutex.Unlock()
 		}
-
 		return
 	}
 
-	// Log the rule match
-	if debug {
-		log.Printf("Rule match: IP=%s, Reason=%s, File=%s", ip, reason, filePath)
-	}
+	// Log the rule match - Keep this log as it's important
+	log.Printf("Rule match: IP=%s, Reason=%s, File=%s", ip, reason, filePath)
 
 	// Get the threshold and duration for this rule
 	ruleThreshold, ruleDuration := getRuleThreshold(reason)
@@ -154,7 +145,7 @@ func processLogEntry(line, filePath string, state *FileState) {
 
 	// Check if we should block this IP
 	if record.Count >= ruleThreshold {
-		// Block the IP
+		// Block the IP - blockIP logs the action
 		blockIP(ip, filePath, reason)
 
 		// Check if we should block the subnet
@@ -168,16 +159,17 @@ func processLogEntry(line, filePath string, state *FileState) {
 			count := len(subnetBlockedIPs[subnet])
 			mu.Unlock()
 
-			if debug {
+			if debug { // Log subnet count only in debug
 				log.Printf("Subnet %s has %d/%d unique IPs blocked",
 					subnet, count, subnetThreshold)
 			}
 
 			if count >= subnetThreshold {
+				// blockSubnet logs the action
 				blockSubnet(subnet)
 			}
 		}
-	} else if debug {
+	} else if debug { // Only log count if debug enabled
 		log.Printf("IP %s has %d/%d suspicious requests (%s)",
 			ip, record.Count, ruleThreshold, record.Reason)
 	}
@@ -189,7 +181,7 @@ func processLogEntry(line, filePath string, state *FileState) {
 		state.LastProcessedIP = ip
 		stateMutex.Unlock()
 
-		if verbose {
+		if verbose { // Log timestamp update only in verbose
 			log.Printf("Updated last processed timestamp to %s for file %s",
 				timestamp.Format(time.RFC3339), filePath)
 		}

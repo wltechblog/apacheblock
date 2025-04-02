@@ -64,6 +64,7 @@ func readDomainWhitelistFile(filePath string) error {
 		domainWhitelist[line] = true
 		domainWhitelistMu.Unlock()
 
+		// Log adding domain only in debug
 		if debug {
 			log.Printf("Added domain %s to domain whitelist", line)
 		}
@@ -111,6 +112,7 @@ func isDomainWhitelisted(ip string) bool {
 	// Perform reverse DNS lookup
 	hostnames, err := net.LookupAddr(ip)
 	if err != nil || len(hostnames) == 0 {
+		// Log lookup failure only in debug
 		if debug {
 			log.Printf("No reverse DNS records found for IP %s or lookup error: %v", ip, err)
 		}
@@ -122,6 +124,7 @@ func isDomainWhitelisted(ip string) bool {
 		// Remove trailing dot if present
 		hostname = strings.TrimSuffix(hostname, ".")
 
+		// Log reverse lookup result only in debug
 		if debug {
 			log.Printf("Reverse DNS lookup for IP %s returned hostname: %s", ip, hostname)
 		}
@@ -129,6 +132,7 @@ func isDomainWhitelisted(ip string) bool {
 		// Verify with forward lookup
 		ips, err := net.LookupHost(hostname)
 		if err != nil {
+			// Log forward lookup failure only in debug
 			if debug {
 				log.Printf("Forward DNS lookup failed for hostname %s: %v", hostname, err)
 			}
@@ -145,6 +149,7 @@ func isDomainWhitelisted(ip string) bool {
 		}
 
 		if !ipFound {
+			// Log forward verification failure only in debug
 			if debug {
 				log.Printf("Forward DNS verification failed: IP %s not found in results for %s", ip, hostname)
 			}
@@ -156,6 +161,7 @@ func isDomainWhitelisted(ip string) bool {
 		for domain := range domainWhitelist {
 			// Check for exact match or if hostname ends with .domain
 			if hostname == domain || strings.HasSuffix(hostname, "."+domain) {
+				// Log successful match only in debug
 				if debug {
 					log.Printf("IP %s belongs to whitelisted domain %s (hostname: %s)", ip, domain, hostname)
 				}

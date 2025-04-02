@@ -62,18 +62,16 @@ func readConfigFile(configPath string) error {
 		case "server":
 			if value == "apache" || value == "caddy" {
 				logFormat = value
-				if debug {
-					log.Printf("Config: Set server to %s", value)
-				}
+				// Keep this log minimal unless debugging
+				// log.Printf("Config: Set server to %s", value)
 			} else {
 				log.Printf("Warning: Invalid server value: %s", value)
 			}
 		case "logPath":
 			if _, err := os.Stat(value); err == nil {
 				logpath = value
-				if debug {
-					log.Printf("Config: Set logPath to %s", value)
-				}
+				// Keep this log minimal unless debugging
+				// log.Printf("Config: Set logPath to %s", value)
 			} else {
 				log.Printf("Warning: Invalid logPath value: %s", value)
 			}
@@ -113,24 +111,31 @@ func readConfigFile(configPath string) error {
 			}
 		case "apiKey":
 			apiKey = value
-			if debug {
-				log.Printf("Config: Set apiKey")
-			}
+			// Never log API key, even in debug
 		case "socketPath":
 			SocketPath = value
 			if debug {
 				log.Printf("Config: Set socketPath to %s", value)
 			}
 		case "debug":
-			if value == "true" || value == "1" || value == "yes" {
-				debug = true
-				log.Printf("Config: Enabled debug mode")
+			if bVal, err := strconv.ParseBool(value); err == nil {
+				debug = bVal
+				// Log only if enabling, not disabling
+				if debug {
+					log.Printf("Config: Enabled debug mode via config file")
+				}
+			} else {
+				log.Printf("Warning: Invalid debug value: %s (must be true or false)", value)
 			}
 		case "verbose":
-			if value == "true" || value == "1" || value == "yes" {
-				verbose = true
-				debug = true // Verbose implies debug
-				log.Printf("Config: Enabled verbose debug mode")
+			if bVal, err := strconv.ParseBool(value); err == nil {
+				verbose = bVal
+				if verbose {
+					debug = true // Verbose implies debug
+					log.Printf("Config: Enabled verbose debug mode via config file")
+				}
+			} else {
+				log.Printf("Warning: Invalid verbose value: %s (must be true or false)", value)
 			}
 		case "expirationPeriod":
 			if duration, err := time.ParseDuration(value); err == nil {
@@ -162,11 +167,13 @@ func readConfigFile(configPath string) error {
 				log.Printf("Warning: Invalid subnetThreshold value: %s", value)
 			}
 		case "disableSubnetBlocking":
-			if value == "true" || value == "1" || value == "yes" {
-				disableSubnetBlocking = true
+			if bVal, err := strconv.ParseBool(value); err == nil {
+				disableSubnetBlocking = bVal
 				if debug {
-					log.Printf("Config: Disabled subnet blocking")
+					log.Printf("Config: Set disableSubnetBlocking to %t", bVal)
 				}
+			} else {
+				log.Printf("Warning: Invalid disableSubnetBlocking value: %s (must be true or false)", value)
 			}
 		case "startupLines":
 			var val int
@@ -209,14 +216,12 @@ func readConfigFile(configPath string) error {
 			}
 		case "recaptchaSiteKey":
 			recaptchaSiteKey = value
-			if debug {
-				log.Printf("Config: Set recaptchaSiteKey") // Don't log the key itself
-			}
+			// Never log keys
+			// if debug { log.Printf("Config: Set recaptchaSiteKey") }
 		case "recaptchaSecretKey":
 			recaptchaSecretKey = value
-			if debug {
-				log.Printf("Config: Set recaptchaSecretKey") // Don't log the key itself
-			}
+			// Never log keys
+			// if debug { log.Printf("Config: Set recaptchaSecretKey") }
 		case "challengeTempWhitelistDuration":
 			if duration, err := time.ParseDuration(value); err == nil {
 				challengeTempWhitelistDuration = duration

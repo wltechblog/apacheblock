@@ -46,6 +46,7 @@ func main() {
 	// First, set debug mode if specified on command line
 	if *Debug {
 		debug = true
+		// This log is important even without debug, as it confirms CLI override
 		log.Println("Enabling debug mode from command line")
 	}
 
@@ -57,7 +58,7 @@ func main() {
 		if _, err := os.Stat(*configPath); os.IsNotExist(err) {
 			if err := createExampleConfigFile(*configPath); err != nil {
 				log.Printf("Warning: Failed to create example configuration file: %v", err)
-			} else {
+			} else if debug { // Only log creation in debug mode
 				log.Printf("Created example configuration file at %s", *configPath)
 			}
 		}
@@ -83,11 +84,7 @@ func main() {
 	}
 
 	// Command line flags override configuration file settings
-	if *Debug {
-		debug = true
-		log.Println("Enabling debug mode from command line")
-	}
-
+	// Debug logging already handled above and in config parsing
 	if *Verbose {
 		verbose = true
 		debug = true // Verbose implies debug
@@ -95,54 +92,53 @@ func main() {
 	}
 
 	// Set the file paths and table name if specified on command line
-	if *whitelistPath != whitelistFilePath { // Check if user specified a non-default value
+	// These logs are useful only when debugging overrides
+	if *whitelistPath != whitelistFilePath {
 		whitelistFilePath = *whitelistPath
 		if debug {
 			log.Println("Setting whitelist path from command line:", whitelistFilePath)
 		}
 	}
 
-	if *domainWhitelistPathFlag != domainWhitelistPath { // Check if user specified a non-default value
+	if *domainWhitelistPathFlag != domainWhitelistPath {
 		domainWhitelistPath = *domainWhitelistPathFlag
 		if debug {
 			log.Println("Setting domain whitelist path from command line:", domainWhitelistPath)
 		}
 	}
 
-	if *blocklistPath != blocklistFilePath { // Check if user specified a non-default value
+	if *blocklistPath != blocklistFilePath {
 		blocklistFilePath = *blocklistPath
 		if debug {
 			log.Println("Setting blocklist path from command line:", blocklistFilePath)
 		}
 	}
 
-	if *rulesPath != rulesFilePath { // Check if user specified a non-default value
+	if *rulesPath != rulesFilePath {
 		rulesFilePath = *rulesPath
 		if debug {
 			log.Println("Setting rules path from command line:", rulesFilePath)
 		}
 	}
 
-	if *tableName != firewallChain { // Check if user specified a non-default value // Renamed variable
-		firewallChain = *tableName // Renamed variable
+	if *tableName != firewallChain {
+		firewallChain = *tableName
 		if debug {
-			log.Println("Setting firewall chain from command line:", firewallChain) // Renamed variable
+			log.Println("Setting firewall chain from command line:", firewallChain)
 		}
 	}
 
 	// Set the API key if provided on command line
 	if *apiKeyFlag != "" {
 		apiKey = *apiKeyFlag
-		if debug {
-			log.Println("API key set from command line")
-		}
+		// No logging for API key
 	}
 
 	// Set the socket path if provided on command line
-	if *socketPathFlag != SocketPath { // Check if user specified a non-default value
+	if *socketPathFlag != SocketPath {
 		SocketPath = *socketPathFlag
 		if debug {
-			log.Println("Socket path set from command line:", SocketPath)
+			log.Println("Setting socket path from command line:", SocketPath)
 		}
 	}
 
@@ -150,18 +146,14 @@ func main() {
 	if *server != "apache" || logFormat == "" { // Check if user specified a non-default value or if not set in config
 		if *server == "apache" || *server == "caddy" {
 			logFormat = *server
-			if debug {
-				log.Println("Setting server from command line:", logFormat)
-			}
+			// if debug { log.Println("Setting server from command line:", logFormat) }
 		}
 	}
 
-	if *logPath != "/var/customers/logs" || logpath == "" { // Check if user specified a non-default value or if not set in config
+	if *logPath != "/var/customers/logs" || logpath == "" {
 		if _, err := os.Stat(*logPath); err == nil {
 			logpath = *logPath
-			if debug {
-				log.Println("Setting log path from command line:", logpath)
-			}
+			// if debug { log.Println("Setting log path from command line:", logpath) }
 		}
 	}
 
@@ -319,33 +311,34 @@ func main() {
 	}
 
 	// Log configuration settings
-	log.Printf("Configuration: expirationPeriod=%v, threshold=%d, subnetThreshold=%d, startupLines=%d",
-		expirationPeriod, threshold, subnetThreshold, startupLines)
-	log.Printf("Files: whitelist=%s, domain whitelist=%s, blocklist=%s, firewall chain=%s", // Renamed variable
-		whitelistFilePath, domainWhitelistPath, blocklistFilePath, firewallChain) // Renamed variable
+	// Log configuration settings only in debug mode
+	if debug {
+		log.Printf("Configuration: expirationPeriod=%v, threshold=%d, subnetThreshold=%d, startupLines=%d",
+			expirationPeriod, threshold, subnetThreshold, startupLines)
+		log.Printf("Files: whitelist=%s, domain whitelist=%s, blocklist=%s, firewall chain=%s",
+			whitelistFilePath, domainWhitelistPath, blocklistFilePath, firewallChain)
+	}
 
 	// Determine whitelisted addresses from local interfaces
 	addrs, _ := net.InterfaceAddrs()
 	for _, addr := range addrs {
 		if ip, _, err := net.ParseCIDR(addr.String()); err == nil {
 			whitelist[ip.String()] = true
-			if debug {
-				log.Printf("Added local IP %s to whitelist", ip.String())
-			}
+			// if debug { log.Printf("Added local IP %s to whitelist", ip.String()) }
 		}
 	}
 
 	// Read whitelist from file
 	if err := readWhitelistFile(whitelistFilePath); err != nil {
 		log.Printf("Warning: Failed to read whitelist file: %v", err)
-	} else {
+	} else if debug { // Only log success in debug mode
 		log.Printf("Successfully loaded whitelist from %s", whitelistFilePath)
 	}
 
 	// Read domain whitelist from file
 	if err := readDomainWhitelistFile(domainWhitelistPath); err != nil {
 		log.Printf("Warning: Failed to read domain whitelist file: %v", err)
-	} else {
+	} else if debug { // Only log success in debug mode
 		log.Printf("Successfully loaded domain whitelist from %s", domainWhitelistPath)
 	}
 
@@ -358,35 +351,36 @@ func main() {
 	}
 
 	// Apply the blocklist to the firewall using the manager
-	if err := applyBlockList(); err != nil { // applyBlockList now uses fwManager internally
+	// applyBlockList logs its own summary message
+	if err := applyBlockList(); err != nil {
 		log.Printf("Warning: Failed to apply blocklist: %v", err)
 	}
 
 	// Start the socket server for client communication
 	if err := startSocketServer(); err != nil {
 		log.Printf("Warning: Failed to start socket server: %v", err)
-		log.Printf("Client mode commands will not affect this running instance")
+		// log.Printf("Client mode commands will not affect this running instance") // Less important
 	} else {
-		log.Printf("Socket server started, client mode commands will be processed by this instance")
+		// Keep this log as it confirms server start
+		log.Printf("Socket server started on %s", SocketPath)
 	}
 
 	// Generate snakeoil certificate if challenge feature might be used
 	if challengeEnable {
-		log.Println("[Startup] Challenge feature enabled, attempting to generate snakeoil certificate...")
+		// generateAndLoadSnakeoilCert logs its own progress/success/failure
 		if err := generateAndLoadSnakeoilCert(); err != nil {
-			// Log fatal because the challenge server relies on this for fallback
 			log.Fatalf("[Startup] Failed to generate snakeoil certificate: %v", err)
 		}
-		log.Println("[Startup] Snakeoil certificate generated successfully.")
 	} else {
-		log.Println("[Startup] Challenge feature disabled, skipping snakeoil certificate generation.")
+		if debug {
+			log.Println("[Startup] Challenge feature disabled, skipping snakeoil certificate generation.")
+		}
 	}
-	// Correctly closed if/else block
 
 	// Start the challenge server if enabled
-	log.Println("[Startup] Attempting to start challenge server (if enabled)...")
+	// startChallengeServer logs its own startup message
 	startChallengeServer()
-	log.Println("[Startup] Returned from startChallengeServer function call.") // Note: This logs after the goroutine inside startChallengeServer is launched, not after the server is fully listening.
+	// if debug { log.Println("[Startup] Returned from startChallengeServer function call.") } // Less important
 
 	// Set up the log file watcher
 	watcher, err := setupLogWatcher()

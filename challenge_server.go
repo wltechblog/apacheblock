@@ -74,29 +74,39 @@ func init() {
 // generateAndLoadSnakeoilCert generates a self-signed certificate and key in memory
 // and loads it into the global snakeoilCertificate variable.
 func generateAndLoadSnakeoilCert() error {
-	log.Println("[Snakeoil] Generating RSA 2048-bit private key...")
+	if debug {
+		log.Println("[Snakeoil] Generating RSA 2048-bit private key...")
+	}
 	startTime := time.Now()
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		log.Printf("[Snakeoil] Error generating private key after %v: %v", time.Since(startTime), err)
 		return fmt.Errorf("failed to generate private key: %w", err)
 	}
-	log.Printf("[Snakeoil] Private key generated successfully in %v.", time.Since(startTime))
+	if debug {
+		log.Printf("[Snakeoil] Private key generated successfully in %v.", time.Since(startTime))
+	}
 
-	log.Println("[Snakeoil] Setting up certificate template...")
+	if debug {
+		log.Println("[Snakeoil] Setting up certificate template...")
+	}
 	notBefore := time.Now()
 	// Make cert valid for 10 years, similar to openssl command
 	notAfter := notBefore.Add(10 * 365 * 24 * time.Hour)
 
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	log.Println("[Snakeoil] Generating serial number...")
+	if debug {
+		log.Println("[Snakeoil] Generating serial number...")
+	}
 	startTime = time.Now()
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
 		log.Printf("[Snakeoil] Error generating serial number after %v: %v", time.Since(startTime), err)
 		return fmt.Errorf("failed to generate serial number: %w", err)
 	}
-	log.Printf("[Snakeoil] Serial number generated successfully in %v.", time.Since(startTime))
+	if debug {
+		log.Printf("[Snakeoil] Serial number generated successfully in %v.", time.Since(startTime))
+	}
 
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
@@ -110,27 +120,40 @@ func generateAndLoadSnakeoilCert() error {
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 	}
-	log.Println("[Snakeoil] Certificate template created.")
+	if debug {
+		log.Println("[Snakeoil] Certificate template created.")
+	}
 
-	log.Println("[Snakeoil] Creating certificate...")
+	if debug {
+		log.Println("[Snakeoil] Creating certificate...")
+	}
 	startTime = time.Now()
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
 	if err != nil {
 		log.Printf("[Snakeoil] Error creating certificate after %v: %v", time.Since(startTime), err)
 		return fmt.Errorf("failed to create certificate: %w", err)
 	}
-	log.Printf("[Snakeoil] Certificate created successfully in %v.", time.Since(startTime))
+	if debug {
+		log.Printf("[Snakeoil] Certificate created successfully in %v.", time.Since(startTime))
+	}
 
 	// Encode certificate and key to PEM format in memory
-	log.Println("[Snakeoil] Encoding certificate and key to PEM...")
+	if debug {
+		log.Println("[Snakeoil] Encoding certificate and key to PEM...")
+	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
-	log.Println("[Snakeoil] PEM encoding complete.")
+	if debug {
+		log.Println("[Snakeoil] PEM encoding complete.")
+	}
 
 	// Load the PEM data into a tls.Certificate
-	log.Println("[Snakeoil] Loading PEM data into tls.Certificate...")
+	if debug {
+		log.Println("[Snakeoil] Loading PEM data into tls.Certificate...")
+	}
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
+		// Keep error log unconditional
 		log.Println("[Snakeoil] Error loading generated key pair:", err)
 		return fmt.Errorf("failed to load generated key pair: %w", err)
 	}
@@ -158,6 +181,7 @@ func httpRedirectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	targetURL := "https://" + targetHost + r.URL.RequestURI()
+	// Log redirection only in debug
 	if debug {
 		log.Printf("HTTP Redirector: Redirecting %s to %s", r.URL.String(), targetURL)
 	}
@@ -216,6 +240,7 @@ func startChallengeServer() {
 			// Dynamically load certificate based on SNI, stripping www. prefix
 			serverName := hello.ServerName
 			baseDomain := serverName
+			// Log SNI stripping only in debug
 			if strings.HasPrefix(serverName, "www.") {
 				baseDomain = strings.TrimPrefix(serverName, "www.")
 				if debug {
@@ -226,19 +251,21 @@ func startChallengeServer() {
 			certPath := filepath.Join(challengeCertPath, baseDomain+".crt")
 			keyPath := filepath.Join(challengeCertPath, baseDomain+".key")
 
+			// Log cert loading attempt only in debug
 			if debug {
 				log.Printf("Challenge Server: Attempting to load cert for SNI '%s' (using base domain '%s') from %s and %s", serverName, baseDomain, certPath, keyPath)
 			}
 
 			cert, err := tls.LoadX509KeyPair(certPath, keyPath)
 			if err != nil {
-				// Log the specific error if debug is enabled
+				// Log fallback only in debug
 				if debug {
 					log.Printf("Challenge Server: Failed to load key pair for SNI '%s' (using base domain '%s'): %v. Falling back to snakeoil.", serverName, baseDomain, err)
 				}
 				// Fallback to the generated snakeoil certificate
 				return &snakeoilCertificate, nil
 			}
+			// Log success only in debug
 			if debug {
 				log.Printf("Challenge Server: Successfully loaded specific cert for SNI '%s' (using base domain '%s')", serverName, baseDomain)
 			}
@@ -354,6 +381,7 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Verification Successful ---
+	// Log success unconditionally
 	log.Printf("Verification successful for IP: %s", clientIP)
 
 	// Remove the redirect rule for this IP using the manager
@@ -371,6 +399,7 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Log success unconditionally
 	log.Printf("Successfully removed redirect rule for %s", clientIP)
 
 	// Remove IP from internal blocklist state and save
@@ -378,7 +407,7 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 		// Log error, but proceed as firewall rule was removed.
 		// The blocklist might be out of sync until next save/restart.
 		log.Printf("Error updating internal blocklist for %s after challenge: %v", clientIP, err)
-	} else {
+	} else if debug { // Log success only in debug
 		log.Printf("Successfully removed %s from internal blocklist.", clientIP)
 	}
 
@@ -416,6 +445,7 @@ func verifyRecaptcha(response, remoteIP string) (bool, error) {
 	data.Set("response", response)
 	data.Set("remoteip", remoteIP) // Optional, but recommended
 
+	// Log verification attempt only in debug
 	if debug {
 		log.Printf("Verifying reCAPTCHA for IP %s", remoteIP)
 	}
@@ -432,6 +462,7 @@ func verifyRecaptcha(response, remoteIP string) (bool, error) {
 		return false, fmt.Errorf("failed to read reCAPTCHA response body: %w", err)
 	}
 
+	// Log response body only in debug
 	if debug {
 		log.Printf("reCAPTCHA verification response body: %s", string(body))
 	}

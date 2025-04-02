@@ -153,9 +153,10 @@ func (m *IPTablesManager) AddBlockRule(target string) error {
 	exec.Command("iptables", deleteArgs80...).Run() // Ignore error
 	insertArgs80 := []string{"-w", "-t", "filter", "-I", m.chainName, "1", "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP"}
 	_, err80 := exec.Command("iptables", insertArgs80...).CombinedOutput()
+	// Log errors unconditionally
 	if err80 != nil {
 		log.Printf("Failed to insert block rule for %s port 80: %v", target, err80)
-	} else if debug {
+	} else if debug { // Log success only in debug
 		log.Printf("Ensured block rule exists for %s on port 80", target)
 	}
 
@@ -163,9 +164,10 @@ func (m *IPTablesManager) AddBlockRule(target string) error {
 	exec.Command("iptables", deleteArgs443...).Run() // Ignore error
 	insertArgs443 := []string{"-w", "-t", "filter", "-I", m.chainName, "1", "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP"}
 	_, err443 := exec.Command("iptables", insertArgs443...).CombinedOutput()
+	// Log errors unconditionally
 	if err443 != nil {
 		log.Printf("Failed to insert block rule for %s port 443: %v", target, err443)
-	} else if debug {
+	} else if debug { // Log success only in debug
 		log.Printf("Ensured block rule exists for %s on port 443", target)
 	}
 
@@ -200,7 +202,7 @@ func (m *IPTablesManager) RemoveBlockRule(target string) error {
 				errors = append(errors, errMsg)
 				break
 			}
-			if debug {
+			if debug { // Log success only in debug
 				log.Printf("Successfully removed block rule instance: %v", deleteArgs)
 			}
 			rulesRemoved++
@@ -245,7 +247,7 @@ func (m *IPTablesManager) AddRedirectRule(target string) error {
 				firstErr = err
 			}
 		} else {
-			if debug {
+			if debug { // Log success only in debug
 				log.Printf("Ensured redirect rule exists: iptables %v", strings.Join(addArgs, " "))
 			}
 			rulesAdded++
@@ -287,7 +289,7 @@ func (m *IPTablesManager) RemoveRedirectRule(target string) error {
 				errors = append(errors, errMsg)
 				break
 			}
-			if debug {
+			if debug { // Log success only in debug
 				log.Printf("Successfully removed redirect rule instance: %v", deleteArgs)
 			}
 			rulesRemoved++
@@ -319,6 +321,7 @@ func (m *NFTablesManager) runNFTCommand(args ...string) ([]byte, error) {
 		// Include output in error message for better debugging
 		return output, fmt.Errorf("nft command failed (%v): %v, output: %s", args, err, string(output))
 	}
+	// Only log success in debug mode
 	if debug {
 		log.Printf("Successfully ran nft command: %v", args)
 	}
@@ -411,6 +414,7 @@ func (m *NFTablesManager) AddBlockRule(target string) error {
 	rule := fmt.Sprintf("add rule %s %s ip saddr %s tcp dport {80, 443} drop", m.tableName, m.filterChain, target)
 	_, err := m.runNFTCommand(strings.Split(rule, " ")...)
 	if err != nil {
+		// Log existence check only in debug
 		if strings.Contains(err.Error(), "File exists") || strings.Contains(err.Error(), "Object exists") {
 			if debug {
 				log.Printf("NFTables block rule for %s likely already exists.", target)
@@ -460,7 +464,7 @@ func (m *NFTablesManager) AddRedirectRule(target string) error {
 			if firstErr == nil {
 				firstErr = err
 			}
-		} else {
+		} else if debug { // Log success only in debug
 			log.Printf("Added nftables redirect rule: %s", rule)
 		}
 	}
@@ -557,7 +561,7 @@ func blockIP(ip, filePath string, rule string) {
 	// Save the updated blocklist
 	if err := saveBlockList(); err != nil {
 		log.Printf("Warning: Failed to save blocklist after blocking IP %s: %v", ip, err)
-	} else if debug {
+	} else if debug { // Log success only in debug
 		log.Printf("Successfully saved blocklist to %s", blocklistFilePath)
 	}
 	log.Printf("Blocked IP %s from file %s for %s", ip, filePath, rule)
@@ -634,7 +638,7 @@ func blockSubnet(subnet string) {
 	// Save the updated blocklist
 	if err := saveBlockList(); err != nil {
 		log.Printf("Warning: Failed to save blocklist after blocking subnet %s: %v", subnet, err)
-	} else if debug {
+	} else if debug { // Log success only in debug
 		log.Printf("Successfully saved blocklist to %s", blocklistFilePath)
 	}
 	log.Printf("Blocked subnet %s and removed %d individual IPs", subnet, len(ipsToRemove))

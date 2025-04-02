@@ -77,12 +77,14 @@ func handleConnection(conn net.Conn) {
 		return
 	}
 
+	// Log received command only in debug
 	if debug {
 		log.Printf("Received command: %s, target: %s", msg.Command, msg.Target)
 	}
 
 	// Check API key if one is configured
 	if apiKey != "" && msg.APIKey != apiKey {
+		// Log invalid key only in debug
 		if debug {
 			log.Printf("Invalid API key received: %s", msg.APIKey)
 		}

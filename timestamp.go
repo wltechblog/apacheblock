@@ -35,6 +35,7 @@ func extractApacheTimestamp(line string) (time.Time, bool) {
 	// Apache log format: 02/Jan/2006:15:04:05 -0700
 	timestamp, err := time.Parse("02/Jan/2006:15:04:05 -0700", matches[1])
 	if err != nil {
+		// Log only if verbose
 		if verbose {
 			log.Printf("Failed to parse timestamp from Apache log entry: %s, error: %v", matches[1], err)
 		}
@@ -69,6 +70,7 @@ func extractCaddyTimestamp(line string) (time.Time, bool) {
 	if ok {
 		timestamp, err := time.Parse(time.RFC3339, tsString)
 		if err != nil {
+			// Log only if verbose
 			if verbose {
 				log.Printf("Failed to parse timestamp from Caddy log entry: %s, error: %v", tsString, err)
 			}
@@ -84,6 +86,7 @@ func extractCaddyTimestamp(line string) (time.Time, bool) {
 		return timestamp, true
 	}
 
+	// Log only if verbose
 	if verbose {
 		log.Printf("Unsupported timestamp format in Caddy log entry: %v", tsValue)
 	}
@@ -96,7 +99,7 @@ func isNewerThan(timestamp, reference time.Time) bool {
 	if reference.IsZero() {
 		return true
 	}
-	
+
 	// Compare timestamps
 	return timestamp.After(reference)
 }
