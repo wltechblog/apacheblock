@@ -26,11 +26,11 @@ func processLogEntry(line, filePath string, state *FileState) {
 		return
 	}
 
-	// Skip if this is the same IP we just processed (helps avoid duplicates)
-	if state != nil && ip == state.LastProcessedIP && !state.LastTimestamp.IsZero() {
-		// if verbose { log.Printf("Skipping duplicate IP: %s (already processed)", ip) } // Less important
-		return
-	}
+	// // Skip if this is the same IP we just processed (helps avoid duplicates) - REMOVED - Rate limiting handled by ipAccessLog
+	// if state != nil && ip == state.LastProcessedIP && !state.LastTimestamp.IsZero() {
+	// 	// if verbose { log.Printf("Skipping duplicate IP: %s (already processed)", ip) } // Less important
+	// 	return
+	// }
 
 	// Check IP whitelist
 	if isWhitelisted(ip) {
