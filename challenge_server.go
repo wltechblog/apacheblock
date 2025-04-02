@@ -123,13 +123,8 @@ func generateAndLoadSnakeoilCert() error {
 }
 
 // startChallengeServer initializes and starts the HTTPS challenge server.
+// Assumes generateAndLoadSnakeoilCert() has already been called successfully.
 func startChallengeServer() {
-	// Generate the snakeoil certificate first
-	if err := generateAndLoadSnakeoilCert(); err != nil {
-		log.Fatalf("Failed to generate snakeoil certificate: %v", err)
-		// Or handle differently, maybe disable server? For now, fatal.
-	}
-
 	if !challengeEnable {
 		log.Println("Challenge server disabled by configuration.")
 		return

@@ -370,6 +370,14 @@ func main() {
 		log.Printf("Socket server started, client mode commands will be processed by this instance")
 	}
 
+	// Generate snakeoil certificate if challenge feature might be used
+	if challengeEnable {
+		if err := generateAndLoadSnakeoilCert(); err != nil {
+			// Log fatal because the challenge server relies on this for fallback
+			log.Fatalf("Failed to generate snakeoil certificate: %v", err)
+		}
+	}
+
 	// Start the challenge server if enabled
 	startChallengeServer()
 
