@@ -26,6 +26,7 @@ The primary goal is to implement the reCAPTCHA-based unblocking mechanism as req
     -   Fixed various compiler/syntax errors during development.
     -   Modified challenge server to issue a 302 redirect to `/recaptcha-challenge` to avoid caching issues (`challenge_server.go`).
     -   Updated challenge success page to link back to the original host's homepage (`challenge_server.go`).
+    -   Added `Connection: close` header to challenge success response to prevent issues with reused connections (`challenge_server.go`).
 -   Updated `README.md` with feature documentation.
 -   Updated Memory Bank files (`productContext.md`, `systemPatterns.md`, `techContext.md`, `progress.md`).
 
@@ -43,4 +44,4 @@ The primary goal is to implement the reCAPTCHA-based unblocking mechanism as req
 -   **HTML Template:** Currently embedded in Go code.
 -   **Temporary Whitelisting:** Implemented with configurable duration.
 -   **Duplicate Rule Prevention:** Delete-then-insert pattern implemented for adding rules.
--   **(Challenge) Caching:** Uses a 302 redirect to a dedicated challenge path (`/recaptcha-challenge`) to prevent caching of the initial blocked response. The challenge page itself and the success page use no-cache HTTP headers. The success page link includes a timestamp query parameter for cache busting.
+-   **(Challenge) Caching:** Uses a 302 redirect to a dedicated challenge path (`/recaptcha-challenge`) to prevent caching of the initial blocked response. The challenge page itself and the success page use no-cache HTTP headers. The success page link includes a timestamp query parameter for cache busting. The success response also includes a `Connection: close` header to encourage the browser to establish a new connection after unblocking.

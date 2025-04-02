@@ -436,6 +436,10 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Add Connection: close header to encourage browser to close the connection
+	// and establish a new one, avoiding potential issues with reused connections
+	// still being subject to the (now removed) firewall redirect.
+	w.Header().Set("Connection", "close")
 
 	// Add timestamp for cache busting the return link
 	// Redirect back to the original requested URL if possible, otherwise root.
