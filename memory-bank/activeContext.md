@@ -6,30 +6,39 @@ The primary goal is to implement the reCAPTCHA-based unblocking mechanism as req
 
 ## Recent Changes
 
--   Initialized the Memory Bank (`projectbrief.md`, `productContext.md`, `systemPatterns.md`, `techContext.md`, `activeContext.md`, `progress.md`) and `.clinerules`.
--   **Configuration:** Added challenge feature settings (`challengeEnable`, `challengePort`, `challengeCertPath`, `recaptchaSiteKey`, `recaptchaSecretKey`, `firewallType`) to `types.go` and updated `config.go` parser and example file. Renamed `firewallTable` to `firewallChain` globally. Fixed associated redeclaration errors.
--   **Firewall Logic (`firewall.go`):**
-    *   Added `addRedirectRule` and `removeRedirectRule` functions for `iptables` NAT PREROUTING.
-    *   Modified `blockIP`, `blockSubnet`, and `applyBlockList` to use redirect rules when `challengeEnable` is true.
--   **Challenge Server (`challenge_server.go`):** Created the file with:
-    *   HTTPS server using SNI (`GetCertificate`) to load domain-specific certs.
-    *   Handler (`handleChallengeRequest`) serving an HTML page with the reCAPTCHA widget.
-    *   Verification endpoint (`handleVerifyRequest`) that calls Google's API (`verifyRecaptcha`) and uses `removeRedirectRule` on success.
--   **Integration (`main.go`):** Added call to `startChallengeServer()` during server startup sequence.
--   **Unblocking Logic:** Updated `clientUnblockIP` (in `main.go`) and `processCommand` (in `socket.go`) to correctly remove either redirect or block rules based on `challengeEnable`.
+-   Initialized the Memory Bank and `.clinerules`.
+-   Implemented core reCAPTCHA challenge feature:
+    -   Added configuration options (`challengeEnable`, `challengePort`, `challengeCertPath`, `recaptchaSiteKey`, `recaptchaSecretKey`, `firewallType`, `challengeTempWhitelistDuration`).
+    -   Created `challenge_server.go` with HTTPS listener, SNI handling, reCAPTCHA verification, and firewall interaction.
+    -   Modified `firewall.go` to add/remove `iptables` REDIRECT rules.
+    -   Integrated server start into `main.go`.
+    -   Updated unblocking logic in `main.go` and `socket.go`.
+-   **Refinements & Fixes:**
+    -   Fixed `removeRedirectRule` to handle potential duplicate rules (`firewall.go`).
+    -   Updated challenge server certificate loading to strip `www.` prefix (`challenge_server.go`).
+    -   Added no-cache headers to challenge/success pages (`challenge_server.go`).
+    -   Implemented temporary whitelist (`temp_whitelist.go`, `types.go`, `config.go`, `process_log_entry.go`, `challenge_server.go`, `logmonitor.go`) to prevent immediate re-blocking.
+    -   Added snakeoil certificate generation/fallback (`challenge_server.go`, `main.go`).
+    -   Suppressed TLS handshake errors (`challenge_server.go`).
+    -   Fixed startup hang by moving snakeoil generation later (`main.go`).
+    -   Fixed deadlock in `applyBlockList` by removing redundant checks (`firewall.go`).
+    -   Corrected firewall rule addition logic to use delete-then-insert (`firewall.go`).
+    -   Fixed various compiler/syntax errors during development.
+-   Updated `README.md` with feature documentation.
+-   Updated Memory Bank files (`productContext.md`, `systemPatterns.md`, `techContext.md`).
 
 ## Next Steps
 
-1.  **Update `progress.md`:** Reflect the completed implementation steps.
-2.  **Update README:** Add documentation for the new configuration options and feature behavior.
-3.  **Testing:** Implement unit/integration tests for the challenge server and firewall interactions.
-4.  **Commit Changes:** Commit the implemented feature.
-5.  **Present Completion:** Inform the user of the completed implementation.
+1.  **Update `progress.md`:** Reflect the completed implementation and fixes.
+2.  **Testing:** Implement unit/integration tests for the challenge server and firewall interactions.
+3.  **Commit Changes:** Commit Memory Bank updates.
+4.  **Present Completion:** Inform the user of the completed implementation and documentation updates.
 
 ## Active Decisions & Considerations
 
--   **Firewall Tool:** Need to confirm how `firewall.go` currently determines which tool (iptables/nftables) to use, or add configuration for it. The redirect/DNAT commands differ significantly. Assuming `iptables` for now unless specified otherwise.
--   **Certificate Loading:** Ensure robust error handling for missing or invalid certificates.
--   **reCAPTCHA Version:** Using reCAPTCHA v2 ("I'm not a robot" checkbox) as it's simpler for this server-side flow.
--   **HTML Template:** Embedding the HTML directly in the Go code might be simpler than managing separate template files for this single page.
--   **Temporary Whitelisting:** Consider adding the successfully verified IP to a temporary whitelist in `whitelist.go` to prevent immediate re-blocking if they trigger rules again shortly after verification.
+-   **Firewall Tool:** Redirect feature currently only supports `iptables`. `nftables` support would require implementing equivalent NAT redirect rules.
+-   **Certificate Loading:** Snakeoil fallback implemented, but relies on successful in-memory generation at startup.
+-   **reCAPTCHA Version:** Using reCAPTCHA v2.
+-   **HTML Template:** Currently embedded in Go code.
+-   **Temporary Whitelisting:** Implemented with configurable duration.
+-   **Duplicate Rule Prevention:** Delete-then-insert pattern implemented for adding rules.

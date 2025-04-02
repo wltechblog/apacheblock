@@ -11,17 +11,20 @@ However, automated blocking can sometimes lead to false positives, blocking legi
 1.  **Log Monitoring:** ApacheBlock continuously monitors Apache access logs.
 2.  **Threat Detection:** It applies configured rules to identify patterns indicative of malicious activity originating from specific IP addresses.
 3.  **Blocking Action:**
-    *   **(Current):** Adds the malicious IP to a system firewall block rule (e.g., `iptables DROP`).
-    *   **(Proposed):** Modifies the firewall rule to redirect traffic from the blocked IP to a specific port listened to by ApacheBlock itself.
-4.  **Challenge Page (Proposed):**
-    *   ApacheBlock listens on the designated redirect port.
-    *   It uses SNI to identify the requested domain and serves a valid HTTPS response using certificates stored locally (e.g., `/path/to/certs/[domain].key`, `/path/to/certs/[domain].crt`).
-    *   It presents an HTML page explaining the block and embedding a Google reCAPTCHA challenge.
-5.  **Unblocking (Proposed):**
-    *   If the user successfully solves the reCAPTCHA, ApacheBlock receives verification from Google.
-    *   ApacheBlock removes the redirect rule for the user's IP from the firewall, restoring normal access.
-    *   The IP might be temporarily whitelisted to prevent immediate re-blocking.
-6.  **Configuration:** Administrators can configure log paths, detection rules, blocking thresholds, whitelist/blocklist IPs, the redirect port, certificate paths, and reCAPTCHA keys.
+    *   **(Legacy):** Adds the malicious IP to a system firewall block rule (e.g., `iptables DROP`).
+    *   **(Challenge Mode):** If `challengeEnable` is true, adds firewall rules (e.g., `iptables REDIRECT` in `nat` table) to redirect traffic (port 80/443) from the blocked IP to the `challengePort` listened to by ApacheBlock.
+4.  **Challenge Page (Challenge Mode):**
+    *   ApacheBlock listens on the configured `challengePort`.
+    *   It uses SNI to identify the requested domain, strips any `www.` prefix, and attempts to load the corresponding certificate (`[domain].crt`, `[domain].key`) from `challengeCertPath`.
+    *   If a domain-specific certificate isn't found, it serves a self-signed "snakeoil" certificate generated in memory at startup (this will cause browser warnings).
+    *   It presents an HTML page (served with no-cache headers) explaining the block and embedding a Google reCAPTCHA v2 challenge using the configured `recaptchaSiteKey`.
+5.  **Unblocking (Challenge Mode):**
+    *   User submits the reCAPTCHA form to the `/verify` endpoint on the challenge server.
+    *   The server verifies the reCAPTCHA response with Google using the configured `recaptchaSecretKey`.
+    *   If verification succeeds, ApacheBlock removes the redirect rule(s) for the user's IP from the firewall.
+    *   The user's IP is added to a temporary whitelist for the duration specified by `challengeTempWhitelistDuration` to prevent immediate re-blocking by subsequent log entries.
+    *   A success page (served with no-cache headers and a cache-busting link) is displayed.
+6.  **Configuration:** Administrators can configure log paths, detection rules, blocking thresholds, whitelist/blocklist IPs, firewall type/chain, and optionally enable the challenge feature with its specific settings (`challengeEnable`, `challengePort`, `challengeCertPath`, `recaptchaSiteKey`, `recaptchaSecretKey`, `challengeTempWhitelistDuration`).
 
 ## User Experience Goals
 

@@ -16,8 +16,10 @@ graph TD
         Blocklist[blocklist.go] --> Firewall
         Whitelist[whitelist.go] --> Firewall
         DomainWhitelist[domainwhitelist.go] --> Firewall
-        ChallengeServer[(challenge_server.go - Proposed)] --> Main
+        TempWhitelist[temp_whitelist.go] --> Processor // Added
+        ChallengeServer[challenge_server.go] --> Main
         ChallengeServer --> Firewall
+        ChallengeServer --> TempWhitelist // Added
     end
 
     LogFile[/var/log/apache2/access.log] --> LogMonitor
@@ -36,24 +38,29 @@ graph TD
 3.  **Log Processing (`process_log_entry.go`):** Parses log lines (likely using regex or structured parsing). Extracts relevant information (IP, timestamp, request path, user agent).
 4.  **Rule Engine (`rules.go`):** Evaluates extracted log data against configured rules. Rules might involve thresholds (e.g., requests per minute), specific path patterns, or user agent matching. Determines if an IP should be blocked.
 5.  **Firewall Interaction (`firewall.go`):**
-    *   **Current:** Executes system commands (`iptables`, `nft`) to add/remove DROP rules for specific IPs. Manages the lifecycle of these rules.
-    *   **Proposed:** Executes system commands to add/remove REDIRECT or DNAT rules targeting a specific port listened to by ApacheBlock. Needs functions for adding redirect, removing redirect, and potentially checking existing rules.
-6.  **IP/Domain Management (`blocklist.go`, `whitelist.go`, `domainwhitelist.go`):** Maintains in-memory lists or persistent storage of IPs/domains that are explicitly blocked, whitelisted (never blocked), or domain-whitelisted. Firewall interaction checks against these lists.
-7.  **Challenge Server (`challenge_server.go` - Proposed):**
-    *   Starts an HTTPS server listening on the configured redirect port.
-    *   Uses `crypto/tls` and `GetCertificate` callback for SNI support, dynamically loading certificates based on the requested domain from the configured certificate path (`[domain].key`, `[domain].crt`).
-    *   Serves a static HTML page containing the reCAPTCHA widget (using the configured site key).
-    *   Provides an endpoint (e.g., `/verify`) to handle the POST request from the reCAPTCHA form.
-    *   Validates the `g-recaptcha-response` token by making a request to the Google reCAPTCHA API (`https://www.google.com/recaptcha/api/siteverify`) using the configured secret key.
-    *   If verification is successful, calls the Firewall Interaction component to remove the redirect rule for the client's IP address.
-    *   Handles potential errors (invalid certificates, reCAPTCHA verification failure).
-8.  **Main Orchestration (`main.go`):** Initializes components, loads configuration, starts the log monitor and the challenge server (proposed), and handles graceful shutdown.
+    *   **Legacy Mode:** Executes system commands (`iptables`, `nft`) to add/remove DROP rules for specific IPs in the `filter` table (`firewallChain`). Uses a delete-then-insert pattern (`addBlockRule`) to prevent duplicates.
+    *   **Challenge Mode:** Executes system commands (`iptables`) to add/remove REDIRECT rules for specific IPs in the `nat` table (`PREROUTING` chain) targeting the `challengePort`. Uses a delete-then-insert pattern (`addRedirectRule`) to prevent duplicates. Also includes `removeRedirectRule` for unblocking.
+6.  **IP/Domain Management (`blocklist.go`, `whitelist.go`, `domainwhitelist.go`):** Maintains in-memory lists or persistent storage of IPs/domains that are explicitly blocked, whitelisted (never blocked), or domain-whitelisted. Log processing checks against these lists.
+7.  **Temporary Whitelist (`temp_whitelist.go` - New):**
+    *   Maintains an in-memory map of IPs to expiry times.
+    *   Provides functions `addTempWhitelist`, `isTempWhitelisted`, and `cleanupTempWhitelist`.
+    *   Used after successful challenge completion to prevent immediate re-blocking.
+    *   Log processing (`process_log_entry.go`) checks this before evaluating block rules.
+8.  **Challenge Server (`challenge_server.go`):**
+    *   Starts an HTTPS server listening on `challengePort` if `challengeEnable` is true.
+    *   Generates an in-memory snakeoil certificate at startup (`generateAndLoadSnakeoilCert`).
+    *   Uses `crypto/tls.Config.GetCertificate` for SNI: attempts to load domain-specific certs (stripping `www.`), falls back to snakeoil cert if needed.
+    *   Serves an HTML page (`/`) with no-cache headers and the reCAPTCHA widget.
+    *   Handles verification requests (`/verify`): validates reCAPTCHA with Google, calls `removeRedirectRule`, adds IP to temporary whitelist (`addTempWhitelist`), and serves a success page with no-cache headers and cache-busting link.
+    *   Suppresses TLS handshake errors via `http.Server.ErrorLog`.
+9.  **Main Orchestration (`main.go`):** Initializes components, loads configuration, generates snakeoil cert (if challenge enabled), starts the log monitor, socket server, challenge server (if enabled), and periodic tasks (including temp whitelist cleanup), handles graceful shutdown.
 
 ## Technical Decisions
 
 -   **Language:** Go (chosen for performance, concurrency, and suitability for system-level tasks).
--   **Firewall:** Interacts directly with system firewall tools (iptables/nftables) via command execution. This avoids complex kernel-level programming but requires the service to run with sufficient privileges.
--   **Concurrency:** Likely uses goroutines for log monitoring, processing, and potentially handling challenge server requests concurrently.
--   **State Management:** Blocked IPs and rules might be managed in memory, potentially with persistence or reconciliation on startup.
--   **(Proposed) HTTPS Handling:** Standard Go `net/http` and `crypto/tls` libraries for the challenge server.
--   **(Proposed) reCAPTCHA:** Server-side verification flow using Google's API.
+-   **Firewall:** Interacts directly with system firewall tools (iptables/nftables) via command execution. Requires sufficient privileges. Redirect feature currently only supports `iptables`. Uses delete-then-insert pattern for adding rules to prevent duplicates.
+-   **Concurrency:** Uses goroutines for log monitoring, processing, challenge server requests, socket server connections, and periodic tasks. Mutexes (`sync.Mutex`) protect shared state (blocklists, temporary whitelist, file states).
+-   **State Management:** Blocked IPs/subnets persisted to JSON (`blocklist.json`). Temporary whitelist is in-memory only. Log file processing state (`fileStates`) is in-memory.
+-   **(Challenge) HTTPS Handling:** Standard Go `net/http` and `crypto/tls`. Uses `GetCertificate` for SNI and in-memory snakeoil certificate generation/fallback. Suppresses `http.Server` errors (including TLS handshake) via `ErrorLog`.
+-   **(Challenge) reCAPTCHA:** Server-side verification flow using Google's v2 API.
+-   **(Challenge) Caching:** Uses no-cache HTTP headers and timestamp query parameter on success link to mitigate browser caching issues.
