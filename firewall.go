@@ -3,276 +3,246 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
+	"sync" // Added for manager instance
 )
 
-// setupFirewallTable creates our custom iptables table and chain if they don't exist
-// and sets up the necessary rules to use it for incoming connections
-func setupFirewallTable() error {
-	// First, check if iptables is available
+// --- Firewall Manager Interface ---
+
+// FirewallManager defines the interface for interacting with different firewall backends.
+type FirewallManager interface {
+	Setup() error                                   // Ensure necessary chains/tables exist.
+	AddBlockRule(target string) error               // Add a rule to block traffic (DROP).
+	RemoveBlockRule(target string) error            // Remove a blocking rule.
+	AddRedirectRule(target string) error            // Add a rule to redirect traffic (for challenge).
+	RemoveRedirectRule(target string) error         // Remove a redirect rule.
+	Flush() error                                   // Flush all rules added by this tool.
+	IsRulePresent(checkArgs []string) (bool, error) // Check if a specific rule exists.
+}
+
+// Global instance of the firewall manager
+var (
+	fwManager FirewallManager
+	fwOnce    sync.Once // To initialize the manager only once
+)
+
+// InitFirewallManager selects and initializes the appropriate firewall manager based on config.
+func InitFirewallManager() error {
+	var initErr error
+	fwOnce.Do(func() {
+		log.Printf("Initializing Firewall Manager (Type: %s)...", firewallType)
+		switch firewallType {
+		case "iptables":
+			fwManager = &IPTablesManager{chainName: firewallChain}
+			initErr = fwManager.Setup()
+		case "nftables":
+			// Define table name (e.g., "inet apacheblock") and chain names
+			tableName := "inet apacheblock" // Includes family
+			filterChainName := firewallChain
+			natChainName := firewallChain + "_nat"
+			fwManager = &NFTablesManager{tableName: tableName, filterChain: filterChainName, natChain: natChainName}
+			initErr = fwManager.Setup()
+		default:
+			initErr = fmt.Errorf("unsupported firewallType: %s", firewallType)
+		}
+		if initErr != nil {
+			log.Printf("Firewall Manager initialization failed: %v", initErr)
+		} else {
+			log.Printf("Firewall Manager initialized successfully.")
+		}
+	})
+	return initErr
+}
+
+// --- IPTables Implementation ---
+
+// IPTablesManager implements FirewallManager using iptables commands.
+type IPTablesManager struct {
+	chainName string
+}
+
+// Setup ensures the iptables chain exists and is linked.
+func (m *IPTablesManager) Setup() error {
+	log.Println("Setting up iptables...")
 	if _, err := exec.LookPath("iptables"); err != nil {
 		return fmt.Errorf("iptables command not found: %v", err)
 	}
-
-	// Check if we have permission to run iptables
 	versionCmd := exec.Command("iptables", "-V")
 	output, err := versionCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("cannot run iptables (permission issue?): %v, output: %s", err, string(output))
 	}
-
 	if debug {
 		log.Printf("Using iptables version: %s", strings.TrimSpace(string(output)))
 	}
 
-	// Check if our chain exists (use -n to disable DNS lookups)
-	cmd := exec.Command("iptables", "-w", "-t", "filter", "-L", firewallChain, "-n") // Renamed variable
+	cmd := exec.Command("iptables", "-w", "-t", "filter", "-L", m.chainName, "-n")
 	output, err = cmd.CombinedOutput()
-	if err != nil {
-		// Chain doesn't exist, create it
-		log.Printf("Creating custom iptables chain: %s", firewallChain) // Renamed variable
+	chainExists := err == nil
 
-		// Create the chain and set up rules
-		cmds := [][]string{
-			// Create the chain
-			{"iptables", "-w", "-t", "filter", "-N", firewallChain}, // Renamed variable
-			// Set default policy to RETURN (continue processing)
-			{"iptables", "-w", "-t", "filter", "-A", firewallChain, "-j", "RETURN"}, // Renamed variable
-			// Insert our chain at the beginning of the INPUT chain
-			{"iptables", "-w", "-t", "filter", "-I", "INPUT", "1", "-j", firewallChain}, // Renamed variable
-		}
-
-		for _, cmdArgs := range cmds {
-			cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
-			output, err := cmd.CombinedOutput()
-			if err != nil {
-				return fmt.Errorf("failed to run %v: %v, output: %s", cmdArgs, err, string(output))
-			}
-			if debug {
-				log.Printf("Successfully ran command: %v", cmdArgs)
-			}
-		}
-
-		log.Printf("Successfully created and configured iptables chain: %s", firewallChain) // Renamed variable
-	} else {
-		// Chain exists, check if it's in the INPUT chain
-		cmd = exec.Command("iptables", "-w", "-t", "filter", "-C", "INPUT", "-j", firewallChain) // Renamed variable
+	if !chainExists {
+		log.Printf("Creating custom iptables chain: %s", m.chainName)
+		cmd = exec.Command("iptables", "-w", "-t", "filter", "-N", m.chainName)
 		output, err = cmd.CombinedOutput()
 		if err != nil {
-			// Chain exists but not in INPUT chain, add it
-			log.Printf("Adding existing chain %s to INPUT chain", firewallChain)                          // Renamed variable
-			cmd = exec.Command("iptables", "-w", "-t", "filter", "-I", "INPUT", "1", "-j", firewallChain) // Renamed variable
-			output, err = cmd.CombinedOutput()
-			if err != nil {
-				return fmt.Errorf("failed to add chain to INPUT: %v, output: %s", err, string(output))
+			return fmt.Errorf("failed to create chain %s: %v, output: %s", m.chainName, err, string(output))
+		}
+	}
+
+	checkLinkCmd := exec.Command("iptables", "-w", "-t", "filter", "-C", "INPUT", "-j", m.chainName)
+	if err := checkLinkCmd.Run(); err != nil {
+		log.Printf("Linking chain %s to INPUT chain", m.chainName)
+		insertLinkCmd := exec.Command("iptables", "-w", "-t", "filter", "-I", "INPUT", "1", "-j", m.chainName)
+		output, err = insertLinkCmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to link chain %s to INPUT: %v, output: %s", m.chainName, err, string(output))
+		}
+	} else {
+		log.Printf("Chain %s is already linked to INPUT chain", m.chainName)
+	}
+
+	if chainExists {
+		if err := m.Flush(); err != nil {
+			if !strings.Contains(err.Error(), "doesn't exist") {
+				return fmt.Errorf("failed to flush existing chain %s: %v", m.chainName, err)
 			}
 		} else {
-			log.Printf("Chain %s is already connected to INPUT chain", firewallChain) // Renamed variable
+			log.Printf("Using existing iptables chain: %s (flushed)", m.chainName)
 		}
-
-		// Flush the chain to start fresh
-		if err := flushFirewallTable(); err != nil {
-			return fmt.Errorf("failed to flush existing chain: %v", err)
-		}
-
-		log.Printf("Using existing iptables chain: %s (flushed)", firewallChain) // Renamed variable
+	} else {
+		log.Printf("Successfully created and configured iptables chain: %s", m.chainName)
 	}
-
-	// Double-check that our chain is properly connected to the INPUT chain
-	cmd = exec.Command("iptables", "-w", "-t", "filter", "-C", "INPUT", "-j", firewallChain) // Renamed variable
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		log.Printf("Warning: Chain %s is not properly connected to INPUT chain, attempting to connect", firewallChain) // Renamed variable
-		cmd = exec.Command("iptables", "-w", "-t", "filter", "-I", "INPUT", "1", "-j", firewallChain)                  // Renamed variable
-		output, err = cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("failed to connect chain to INPUT: %v, output: %s", err, string(output))
-		}
-		log.Printf("Successfully connected chain %s to INPUT chain", firewallChain) // Renamed variable
-	}
-
 	return nil
 }
 
-// flushFirewallTable removes all rules from our custom iptables chain
-func flushFirewallTable() error {
-	// First, check if iptables is available
-	if _, err := exec.LookPath("iptables"); err != nil {
-		return fmt.Errorf("iptables command not found: %v", err)
-	}
-
-	// Check if our chain exists before trying to flush it
-	chainCheckCmd := exec.Command("iptables", "-w", "-t", "filter", "-L", firewallChain, "-n") // Renamed variable
-	if err := chainCheckCmd.Run(); err != nil {
-		// Chain doesn't exist, nothing to flush
-		log.Printf("Chain %s doesn't exist, nothing to flush", firewallChain) // Renamed variable
-		return nil
-	}
-
-	// Flush the chain
-	cmd := exec.Command("iptables", "-w", "-t", "filter", "-F", firewallChain) // Renamed variable
+// Flush removes all rules added by this tool from the filter chain.
+func (m *IPTablesManager) Flush() error {
+	log.Printf("Flushing iptables chain: %s", m.chainName)
+	cmd := exec.Command("iptables", "-w", "-t", "filter", "-F", m.chainName)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to flush iptables chain %s: %v, output: %s", firewallChain, err, string(output)) // Renamed variable
-	}
-
-	// Re-add the default RETURN rule at the end
-	cmd = exec.Command("iptables", "-w", "-t", "filter", "-A", firewallChain, "-j", "RETURN") // Renamed variable
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		log.Printf("Warning: Failed to add default RETURN rule: %v, output: %s", err, string(output))
-		// Try an alternative approach
-		cmd = exec.Command("iptables", "-w", "-t", "filter", "-I", firewallChain, "-j", "RETURN") // Renamed variable
-		output, err = cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("failed to add default RETURN rule (alternative method): %v, output: %s", err, string(output))
+		if strings.Contains(string(output), "No chain/target/match by that name") {
+			log.Printf("Chain %s doesn't exist, nothing to flush.", m.chainName)
+			return nil
 		}
+		return fmt.Errorf("failed to flush iptables chain %s: %v, output: %s", m.chainName, err, string(output))
 	}
-
-	log.Printf("Flushed iptables chain: %s", firewallChain) // Renamed variable
+	log.Printf("Flushed filter chain: %s", m.chainName)
 	return nil
 }
 
-// addBlockRule adds a block rule for an IP or subnet to our custom chain
-// This improved version checks if the rule already exists before adding it
-// and includes fallback mechanisms for different iptables versions
-func addBlockRule(target string) error {
-	// NOTE: Redundant internal blocklist check removed here to prevent deadlock
-	// when called from applyBlockList, which already holds the mutex.
-	// The primary check should happen in the calling function (e.g., blockIP).
-
-	// First, check if iptables is available
-	if _, err := exec.LookPath("iptables"); err != nil {
-		return fmt.Errorf("iptables command not found: %v", err)
+// IsRulePresent checks if a specific iptables rule exists.
+func (m *IPTablesManager) IsRulePresent(checkArgs []string) (bool, error) {
+	fullArgs := append([]string{"-w"}, checkArgs...) // Add wait flag
+	cmd := exec.Command("iptables", fullArgs...)
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
 	}
-
-	// Check if our chain exists before trying to add rules
-	chainCheckCmd := exec.Command("iptables", "-w", "-t", "filter", "-L", firewallChain, "-n") // Renamed variable
-	if err := chainCheckCmd.Run(); err != nil {
-		// Try to create the chain if it doesn't exist
-		if err := setupFirewallTable(); err != nil { // This function internally uses firewallChain now
-			return fmt.Errorf("failed to set up firewall table: %v", err)
-		}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
 	}
+	output, _ := cmd.CombinedOutput()
+	return false, fmt.Errorf("error checking iptables rule %v: %v, output: %s", checkArgs, err, string(output))
+}
 
-	// --- Delete-then-Insert approach for Port 80 ---
-	// 1. Delete the rule (ignore error if it doesn't exist)
-	deleteArgs80 := []string{"-w", "-t", "filter", "-D", firewallChain, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP"}
-	cmd := exec.Command("iptables", deleteArgs80...)
-	if debug {
-		log.Printf("Attempting delete before insert: iptables %v", deleteArgs80)
-	}
-	cmd.Run() // Ignore error, rule might not exist
-
-	// 2. Insert the rule at the top
-	insertArgs80 := []string{"-w", "-t", "filter", "-I", firewallChain, "1", "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP"}
-	cmd = exec.Command("iptables", insertArgs80...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// If insert fails after delete attempt, it's a real error
-		log.Printf("Failed to insert block rule for %s port 80: %v, output: %s", target, err, string(output))
-		// Continue to try port 443, but report error later
+// AddBlockRule adds a standard DROP rule using delete-then-insert.
+func (m *IPTablesManager) AddBlockRule(target string) error {
+	deleteArgs80 := []string{"-w", "-t", "filter", "-D", m.chainName, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP"}
+	exec.Command("iptables", deleteArgs80...).Run() // Ignore error
+	insertArgs80 := []string{"-w", "-t", "filter", "-I", m.chainName, "1", "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP"}
+	_, err80 := exec.Command("iptables", insertArgs80...).CombinedOutput()
+	if err80 != nil {
+		log.Printf("Failed to insert block rule for %s port 80: %v", target, err80)
 	} else if debug {
 		log.Printf("Ensured block rule exists for %s on port 80", target)
 	}
-	err80 := err // Store potential error
 
-	// --- Delete-then-Insert approach for Port 443 ---
-	// 1. Delete the rule (ignore error if it doesn't exist)
-	deleteArgs443 := []string{"-w", "-t", "filter", "-D", firewallChain, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP"}
-	cmd = exec.Command("iptables", deleteArgs443...)
-	if debug {
-		log.Printf("Attempting delete before insert: iptables %v", deleteArgs443)
-	}
-	cmd.Run() // Ignore error
-
-	// 2. Insert the rule at the top
-	insertArgs443 := []string{"-w", "-t", "filter", "-I", firewallChain, "1", "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP"}
-	cmd = exec.Command("iptables", insertArgs443...)
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		// If insert fails after delete attempt, it's a real error
-		log.Printf("Failed to insert block rule for %s port 443: %v, output: %s", target, err, string(output))
+	deleteArgs443 := []string{"-w", "-t", "filter", "-D", m.chainName, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP"}
+	exec.Command("iptables", deleteArgs443...).Run() // Ignore error
+	insertArgs443 := []string{"-w", "-t", "filter", "-I", m.chainName, "1", "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP"}
+	_, err443 := exec.Command("iptables", insertArgs443...).CombinedOutput()
+	if err443 != nil {
+		log.Printf("Failed to insert block rule for %s port 443: %v", target, err443)
 	} else if debug {
 		log.Printf("Ensured block rule exists for %s on port 443", target)
 	}
-	err443 := err // Store potential error
 
-	// Return first error encountered, if any
 	if err80 != nil {
-		return fmt.Errorf("failed to ensure block rule for port 80: %w", err80)
+		return fmt.Errorf("port 80 block failed: %w", err80)
 	}
 	if err443 != nil {
-		return fmt.Errorf("failed to ensure block rule for port 443: %w", err443)
+		return fmt.Errorf("port 443 block failed: %w", err443)
 	}
-
 	return nil
 }
 
-// addRedirectRule adds an iptables rule to redirect traffic from the target IP to the challenge port
-func addRedirectRule(target string) error {
-	// NOTE: Redundant internal blocklist check removed here to prevent deadlock
-	// when called from applyBlockList, which already holds the mutex.
-	// The primary check should happen in the calling function (e.g., blockIP).
-
-	if firewallType != "iptables" {
-		return fmt.Errorf("redirect rules currently only supported for iptables firewallType")
+// RemoveBlockRule removes a standard DROP rule.
+func (m *IPTablesManager) RemoveBlockRule(target string) error {
+	var errors []string
+	ruleSpecs := [][]string{
+		{"-t", "filter", "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP"},
+		{"-t", "filter", "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP"},
 	}
-	// First, check if iptables is available
-	if _, err := exec.LookPath("iptables"); err != nil {
-		return fmt.Errorf("iptables command not found: %v", err)
+	rulesRemoved := 0
+	for _, spec := range ruleSpecs {
+		for {
+			deleteArgs := append([]string{"-w", "-D", m.chainName}, spec...)
+			cmd := exec.Command("iptables", deleteArgs...)
+			_, err := cmd.CombinedOutput()
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+					break
+				}
+				errMsg := fmt.Sprintf("failed to remove block rule %v: %v", deleteArgs, err)
+				log.Println(errMsg)
+				errors = append(errors, errMsg)
+				break
+			}
+			if debug {
+				log.Printf("Successfully removed block rule instance: %v", deleteArgs)
+			}
+			rulesRemoved++
+		}
 	}
+	if len(errors) > 0 {
+		return fmt.Errorf("errors removing block rules for %s: %s", target, strings.Join(errors, "; "))
+	}
+	if rulesRemoved > 0 {
+		log.Printf("Successfully removed %d block rule instance(s) for %s", rulesRemoved, target)
+	}
+	return nil
+}
 
-	challengeHTTPSPortStr := fmt.Sprintf("%d", challengePort)    // Port for HTTPS challenge server
-	challengeHTTPPortStr := fmt.Sprintf("%d", challengeHTTPPort) // Port for HTTP redirector
-
-	// Define the rule specifications for adding (using -I for insert at top)
-	// Port 80 traffic redirects to the HTTP redirector port
-	// Port 443 traffic redirects to the HTTPS challenge port
-	addRuleSpecs := [][]string{ // Use distinct name for add specs
-		// Port 80 rule spec for adding -> Redirect to HTTP Port
+// AddRedirectRule adds NAT redirect rules using delete-then-insert.
+func (m *IPTablesManager) AddRedirectRule(target string) error {
+	challengeHTTPSPortStr := fmt.Sprintf("%d", challengePort)
+	challengeHTTPPortStr := fmt.Sprintf("%d", challengeHTTPPort)
+	addRuleSpecs := [][]string{
 		{"-w", "-t", "nat", "-I", "PREROUTING", "1", "-s", target, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", challengeHTTPPortStr},
-		// Port 443 rule spec for adding -> Redirect to HTTPS Port
 		{"-w", "-t", "nat", "-I", "PREROUTING", "1", "-s", target, "-p", "tcp", "--dport", "443", "-j", "REDIRECT", "--to-port", challengeHTTPSPortStr},
 	}
-
 	var firstErr error
 	rulesAdded := 0
-
-	// Iterate over the specs for adding rules
 	for _, addArgs := range addRuleSpecs {
-		// Define the core rule spec (used for delete/check) by removing action/position/wait flags
-		spec := make([]string, 0, len(addArgs)-3) // Estimate capacity
+		spec := make([]string, 0, len(addArgs)-3)
 		for i, arg := range addArgs {
-			if i > 0 && addArgs[i-1] == "-I" { // Skip position '1' after '-I'
+			if i > 0 && addArgs[i-1] == "-I" {
 				continue
 			}
-			if arg != "-w" && arg != "-I" && arg != "-D" && arg != "-C" { // Exclude action/wait flags
+			if arg != "-w" && arg != "-I" {
 				spec = append(spec, arg)
 			}
 		}
-
-		// --- Delete-then-Insert approach ---
-		// 1. Delete the rule (ignore error if it doesn't exist)
-		// Construct delete arguments: -w -D PREROUTING + spec
 		deleteArgs := append([]string{"-w", "-D", "PREROUTING"}, spec...)
-		cmd := exec.Command("iptables", deleteArgs...)
-		if debug {
-			log.Printf("Attempting delete before insert: iptables %v", strings.Join(deleteArgs, " "))
-		}
-		cmd.Run() // Ignore error
-
-		// 2. Insert the rule at the top using the original addArgs (which include -I 1)
-		cmd = exec.Command("iptables", addArgs...)
-		output, err := cmd.CombinedOutput()
+		exec.Command("iptables", deleteArgs...).Run() // Ignore error
+		cmdIns := exec.Command("iptables", addArgs...)
+		_, err := cmdIns.CombinedOutput()
 		if err != nil {
-			// Log failure but continue to try adding the other rule
-			log.Printf("Failed to insert redirect rule (iptables %v): %v, output: %s", strings.Join(addArgs, " "), err, string(output))
+			log.Printf("Failed to insert redirect rule (iptables %v): %v", strings.Join(addArgs, " "), err)
 			if firstErr == nil {
-				firstErr = err // Store the first error encountered
+				firstErr = err
 			}
 		} else {
 			if debug {
@@ -281,277 +251,332 @@ func addRedirectRule(target string) error {
 			rulesAdded++
 		}
 	}
-
 	if rulesAdded > 0 {
 		log.Printf("Ensured redirect rules are present for %s (Port 80 -> %s, Port 443 -> %s)", target, challengeHTTPPortStr, challengeHTTPSPortStr)
 	}
-
-	// Return the first error encountered, if any
 	if firstErr != nil {
 		return fmt.Errorf("failed to ensure redirect rule(s): %w", firstErr)
 	}
-
 	return nil
 }
 
-// removeRedirectRule removes iptables rules that redirect traffic from the target IP
-func removeRedirectRule(target string) error {
-	if firewallType != "iptables" {
-		return fmt.Errorf("redirect rules currently only supported for iptables firewallType")
-	}
-	// First, check if iptables is available
-	if _, err := exec.LookPath("iptables"); err != nil {
-		return fmt.Errorf("iptables command not found: %v", err)
-	}
-
-	challengeHTTPSPortStr := fmt.Sprintf("%d", challengePort)    // Port for HTTPS challenge server
-	challengeHTTPPortStr := fmt.Sprintf("%d", challengeHTTPPort) // Port for HTTP redirector
-
-	// Define the rule specifications (without -C or -D)
-	// Port 80 traffic redirects to the HTTP redirector port
-	// Port 443 traffic redirects to the HTTPS challenge port
+// RemoveRedirectRule removes NAT redirect rules.
+func (m *IPTablesManager) RemoveRedirectRule(target string) error {
+	challengeHTTPSPortStr := fmt.Sprintf("%d", challengePort)
+	challengeHTTPPortStr := fmt.Sprintf("%d", challengeHTTPPort)
 	ruleSpecs := [][]string{
-		// Port 80 rule spec -> Redirect to HTTP Port
 		{"-t", "nat", "-s", target, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", challengeHTTPPortStr},
-		// Port 443 rule spec -> Redirect to HTTPS Port
 		{"-t", "nat", "-s", target, "-p", "tcp", "--dport", "443", "-j", "REDIRECT", "--to-port", challengeHTTPSPortStr},
 	}
-
 	var errors []string
 	rulesRemoved := 0
-
 	for _, spec := range ruleSpecs {
-		// Check if the rule exists using the exact specification
-		// We loop checking and deleting because there might be duplicate rules if something went wrong before.
 		for {
-			checkArgs := append([]string{"-w", "-C", "PREROUTING"}, spec...)
-			checkCmd := exec.Command("iptables", checkArgs...)
-			err := checkCmd.Run()
-
-			if err != nil {
-				// Rule doesn't exist (or another check error occurred)
-				if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-					// Exit code 1 from -C means rule not found, which is expected after successful deletion or if it never existed.
-					if debug && rulesRemoved == 0 { // Only log "not found" if we haven't removed any rule with this spec yet
-						log.Printf("Redirect rule spec not found, skipping removal: iptables %v", checkArgs)
-					}
-				} else {
-					// Different error during check
-					errMsg := fmt.Sprintf("error checking redirect rule %v: %v", checkArgs, err)
-					log.Println(errMsg)
-					// errors = append(errors, errMsg) // Optionally report check errors
-				}
-				break // Stop trying to delete this specific rule spec
-			}
-
-			// Rule exists, attempt to delete it
 			deleteArgs := append([]string{"-w", "-D", "PREROUTING"}, spec...)
-			deleteCmd := exec.Command("iptables", deleteArgs...)
-			output, deleteErr := deleteCmd.CombinedOutput()
-
-			if deleteErr != nil {
-				errMsg := fmt.Sprintf("failed to remove redirect rule %v: %v, output: %s", deleteArgs, deleteErr, string(output))
+			cmd := exec.Command("iptables", deleteArgs...)
+			_, err := cmd.CombinedOutput()
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+					if debug && rulesRemoved == 0 {
+						log.Printf("Redirect rule spec not found: iptables %v", deleteArgs)
+					}
+					break
+				}
+				errMsg := fmt.Sprintf("failed to remove redirect rule %v: %v", deleteArgs, err)
 				log.Println(errMsg)
 				errors = append(errors, errMsg)
-				break // Stop trying to delete this spec if an error occurs
-			} else {
-				if debug {
-					log.Printf("Successfully removed redirect rule instance: %v", deleteArgs)
-				}
-				rulesRemoved++
-				// Loop again to check if there are more duplicate rules with the same spec
+				break
 			}
+			if debug {
+				log.Printf("Successfully removed redirect rule instance: %v", deleteArgs)
+			}
+			rulesRemoved++
 		}
 	}
-
 	if len(errors) > 0 {
-		return fmt.Errorf("encountered errors removing redirect rules for %s: %s", target, strings.Join(errors, "; "))
+		return fmt.Errorf("errors removing redirect rules for %s: %s", target, strings.Join(errors, "; "))
 	}
-
 	if rulesRemoved > 0 {
 		log.Printf("Successfully removed %d redirect rule instance(s) for %s", rulesRemoved, target)
-	} else {
-		if debug {
-			log.Printf("No redirect rules found or removed for %s", target)
-		}
 	}
-
-	return nil // Success if no errors occurred during deletion attempts
-}
-
-// removeBlockRule removes a block rule for an IP or subnet from our custom chain
-func removeBlockRule(target string) error {
-	// First, check if iptables is available
-	if _, err := exec.LookPath("iptables"); err != nil {
-		return fmt.Errorf("iptables command not found: %v", err)
-	}
-
-	// Check if our chain exists before trying to remove rules
-	chainCheckCmd := exec.Command("iptables", "-w", "-t", "filter", "-L", firewallChain, "-n") // Renamed variable
-	if err := chainCheckCmd.Run(); err != nil {
-		// Chain doesn't exist, nothing to remove
-		if debug {
-			log.Printf("Chain %s doesn't exist, no rules to remove for %s", firewallChain, target) // Renamed variable
-		}
-		return nil
-	}
-
-	// Check if the rule for port 80 exists before trying to remove it
-	checkCmd := exec.Command("iptables", "-w", "-t", "filter", "-C", firewallChain, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP") // Renamed variable
-	port80Exists := checkCmd.Run() == nil
-
-	// Remove the rule for port 80 if it exists
-	if port80Exists {
-		cmd := exec.Command("iptables", "-w", "-t", "filter", "-D", firewallChain, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP") // Renamed variable
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			log.Printf("Failed to unblock %s on port 80: %v, output: %s", target, err, string(output))
-			// Continue anyway to try to remove the port 443 rule
-		} else if debug {
-			log.Printf("Removed block rule for %s on port 80", target)
-		}
-	} else if debug {
-		log.Printf("No rule found for %s on port 80", target)
-	}
-
-	// Check if the rule for port 443 exists before trying to remove it
-	checkCmd = exec.Command("iptables", "-w", "-t", "filter", "-C", firewallChain, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP") // Renamed variable
-	port443Exists := checkCmd.Run() == nil
-
-	// Remove the rule for port 443 if it exists
-	if port443Exists {
-		cmd := exec.Command("iptables", "-w", "-t", "filter", "-D", firewallChain, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP") // Renamed variable
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			log.Printf("Failed to unblock %s on port 443: %v, output: %s", target, err, string(output))
-			// Continue anyway
-		} else if debug {
-			log.Printf("Removed block rule for %s on port 443", target)
-		}
-	} else if debug {
-		log.Printf("No rule found for %s on port 443", target)
-	}
-
 	return nil
 }
 
-// removePortBlockingRules removes all rules in our custom chain
-func removePortBlockingRules() error {
-	// Check if our chain exists (use -n to disable DNS lookups)
-	cmd := exec.Command("iptables", "-w", "-t", "filter", "-L", firewallChain, "-n") // Renamed variable
-	if err := cmd.Run(); err != nil {
-		// Chain doesn't exist, nothing to do
-		log.Printf("Chain %s doesn't exist, nothing to remove", firewallChain) // Renamed variable
-	} else {
-		// Chain exists, flush it
-		if err := flushFirewallTable(); err != nil { // This function internally uses firewallChain now
-			log.Printf("Warning: Failed to flush iptables chain: %v", err)
-			// Continue anyway
-		}
+// --- NFTables Implementation ---
+
+// NFTablesManager implements FirewallManager using nft commands.
+type NFTablesManager struct {
+	tableName   string // e.g., "inet apacheblock"
+	filterChain string // e.g., "apacheblock_filter"
+	natChain    string // e.g., "apacheblock_nat" (nft uses prerouting hook in nat table)
+}
+
+// runNFTCommand executes an nft command and returns its output.
+func (m *NFTablesManager) runNFTCommand(args ...string) ([]byte, error) {
+	cmd := exec.Command("nft", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Include output in error message for better debugging
+		return output, fmt.Errorf("nft command failed (%v): %v, output: %s", args, err, string(output))
+	}
+	if debug {
+		log.Printf("Successfully ran nft command: %v", args)
+	}
+	return output, nil
+}
+
+// Setup creates the necessary nftables table and chains.
+func (m *NFTablesManager) Setup() error {
+	log.Println("Setting up nftables...")
+	if _, err := exec.LookPath("nft"); err != nil {
+		return fmt.Errorf("nft command not found: %v", err)
 	}
 
-	// Clear the blocklist
+	// Check permissions
+	permCheckCmd := exec.Command("nft", "list", "tables")
+	_, err := permCheckCmd.CombinedOutput()
+	if err != nil {
+		if strings.Contains(err.Error(), "permission denied") || strings.Contains(err.Error(), "Operation not permitted") {
+			return fmt.Errorf("cannot run nft (permission issue?): %v", err)
+		}
+		log.Printf("Warning: nft permission check failed, proceeding cautiously: %v", err)
+	}
+
+	// Use a single transaction for setup
+	// Assumes tableName is like "inet familyname"
+	_, tableNameOnly := m.parseTableName() // Use blank identifier for unused family
+	if tableNameOnly == "" {
+		return fmt.Errorf("invalid nftables table name format: %s", m.tableName)
+	}
+	natTableName := "ip " + tableNameOnly // NAT table is typically ip family
+
+	nftCommands := fmt.Sprintf(`
+        add table %s;
+        add chain %s %s { type filter hook input priority filter; policy accept; };
+        add table %s;
+        add chain %s %s { type nat hook prerouting priority dstnat; policy accept; };
+    `, m.tableName, m.tableName, m.filterChain, natTableName, natTableName, m.natChain)
+
+	cmd := exec.Command("nft", "-f", "-")
+	cmd.Stdin = strings.NewReader(nftCommands)
+	output, err := cmd.CombinedOutput()
+
+	// Ignore errors indicating components already exist
+	if err != nil && !strings.Contains(string(output), "File exists") && !strings.Contains(string(output), "Object exists") {
+		return fmt.Errorf("nftables setup transaction failed: %v, output: %s", err, string(output))
+	}
+
+	log.Println("NFTables setup complete (errors ignored if components already exist).")
+	return nil
+}
+
+// Flush removes rules from our specific chains.
+func (m *NFTablesManager) Flush() error {
+	_, tableNameOnly := m.parseTableName() // Use blank identifier for unused family
+	if tableNameOnly == "" {
+		return fmt.Errorf("invalid nftables table name format: %s", m.tableName)
+	}
+	natTableName := "ip " + tableNameOnly
+
+	log.Printf("Flushing nftables chains: %s/%s and %s/%s", m.tableName, m.filterChain, natTableName, m.natChain)
+	// Flush filter chain
+	_, errFilter := m.runNFTCommand("flush", "chain", m.tableName, m.filterChain)
+	if errFilter != nil && !strings.Contains(errFilter.Error(), "No such file or directory") {
+		log.Printf("Warning: Failed to flush nft filter chain: %v", errFilter)
+	}
+	// Flush nat chain
+	_, errNat := m.runNFTCommand("flush", "chain", natTableName, m.natChain)
+	if errNat != nil && !strings.Contains(errNat.Error(), "No such file or directory") {
+		log.Printf("Warning: Failed to flush nft nat chain: %v", errNat)
+	}
+
+	if errFilter != nil && !strings.Contains(errFilter.Error(), "No such file or directory") {
+		return errFilter
+	}
+	if errNat != nil && !strings.Contains(errNat.Error(), "No such file or directory") {
+		return errNat
+	}
+	return nil
+}
+
+// IsRulePresent is complex in nftables as it requires listing and parsing. Placeholder.
+func (m *NFTablesManager) IsRulePresent(checkArgs []string) (bool, error) {
+	log.Println("NFTables IsRulePresent is not yet implemented.")
+	// TODO: Implement rule checking for nftables.
+	return false, fmt.Errorf("nftables IsRulePresent not implemented")
+}
+
+// AddBlockRule adds a drop rule to the filter chain.
+func (m *NFTablesManager) AddBlockRule(target string) error {
+	rule := fmt.Sprintf("add rule %s %s ip saddr %s tcp dport {80, 443} drop", m.tableName, m.filterChain, target)
+	_, err := m.runNFTCommand(strings.Split(rule, " ")...)
+	if err != nil {
+		if strings.Contains(err.Error(), "File exists") || strings.Contains(err.Error(), "Object exists") {
+			if debug {
+				log.Printf("NFTables block rule for %s likely already exists.", target)
+			}
+			return nil // Treat as success if rule exists
+		}
+		return fmt.Errorf("failed to add nft block rule for %s: %w", target, err)
+	}
+	log.Printf("Added nftables block rule for %s", target)
+	return nil
+}
+
+// RemoveBlockRule removes a drop rule. Requires knowing the rule handle or exact spec. Placeholder.
+func (m *NFTablesManager) RemoveBlockRule(target string) error {
+	log.Printf("NFTables RemoveBlockRule for %s is not yet implemented.", target)
+	// TODO: Implement nft rule removal. Requires listing rules to find handle or deleting by exact spec.
+	// Example (spec): nft delete rule inet apacheblock apacheblock_filter ip saddr <target> tcp dport {80, 443} drop
+	return fmt.Errorf("nftables RemoveBlockRule not implemented")
+}
+
+// AddRedirectRule adds redirect rules to the nat chain.
+func (m *NFTablesManager) AddRedirectRule(target string) error {
+	challengeHTTPSPortStr := fmt.Sprintf("%d", challengePort)
+	challengeHTTPPortStr := fmt.Sprintf("%d", challengeHTTPPort)
+	_, tableNameOnly := m.parseTableName()
+	if tableNameOnly == "" {
+		return fmt.Errorf("invalid nftables table name format: %s", m.tableName)
+	}
+	natTableName := "ip " + tableNameOnly
+
+	rules := []string{
+		fmt.Sprintf("add rule %s %s ip saddr %s tcp dport 80 redirect to :%s", natTableName, m.natChain, target, challengeHTTPPortStr),
+		fmt.Sprintf("add rule %s %s ip saddr %s tcp dport 443 redirect to :%s", natTableName, m.natChain, target, challengeHTTPSPortStr),
+	}
+
+	var firstErr error
+	for _, rule := range rules {
+		_, err := m.runNFTCommand(strings.Split(rule, " ")...)
+		if err != nil {
+			if strings.Contains(err.Error(), "File exists") || strings.Contains(err.Error(), "Object exists") {
+				if debug {
+					log.Printf("NFTables redirect rule likely already exists: %s", rule)
+				}
+				continue // Treat as success if rule exists
+			}
+			log.Printf("Failed to add nft redirect rule (%s): %v", rule, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		} else {
+			log.Printf("Added nftables redirect rule: %s", rule)
+		}
+	}
+	if firstErr != nil {
+		return fmt.Errorf("failed to add nft redirect rule(s) for %s: %w", target, firstErr)
+	}
+	log.Printf("Ensured nftables redirect rules are present for %s (Port 80 -> %s, Port 443 -> %s)", target, challengeHTTPPortStr, challengeHTTPSPortStr)
+	return nil
+}
+
+// RemoveRedirectRule removes redirect rules. Requires knowing the rule handle or exact spec. Placeholder.
+func (m *NFTablesManager) RemoveRedirectRule(target string) error {
+	log.Printf("NFTables RemoveRedirectRule for %s is not yet implemented.", target)
+	// TODO: Implement nft rule removal for redirecting. Requires listing rules to find handle or deleting by exact spec.
+	return fmt.Errorf("nftables RemoveRedirectRule not implemented")
+}
+
+// parseTableName splits "family name" into parts.
+func (m *NFTablesManager) parseTableName() (string, string) {
+	parts := strings.Fields(m.tableName)
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return "", "" // Invalid format
+}
+
+// --- Helper functions previously global, now potentially methods or standalone ---
+
+// removePortBlockingRules needs refactoring to use fwManager.Flush() and clear internal state
+func removePortBlockingRules() error {
+	if fwManager == nil {
+		return fmt.Errorf("firewall manager not initialized")
+	}
+	// Flush firewall rules using the manager
+	if err := fwManager.Flush(); err != nil {
+		log.Printf("Warning: Failed to flush firewall rules via manager: %v", err)
+		// Continue to clear internal state anyway
+	}
+
+	// Clear the internal blocklist state
 	mu.Lock()
 	blockedIPs = make(map[string]struct{})
 	blockedSubnets = make(map[string]struct{})
 	mu.Unlock()
 
-	// Save the empty blocklist
+	// Save the empty blocklist file
 	if err := saveBlockList(); err != nil {
 		log.Printf("Warning: Failed to save empty blocklist: %v", err)
 	}
 
-	log.Println("Successfully removed all port blocking rules.")
+	log.Println("Successfully removed all port blocking rules and cleared internal state.")
 	return nil
 }
 
 // blockIP adds an IP to the blocklist and blocks it in the firewall
 func blockIP(ip, filePath string, rule string) {
+	if fwManager == nil {
+		log.Println("Error: Firewall manager not initialized in blockIP")
+		return
+	}
 	// Check if the IP is already in the blocklist
 	alreadyBlocked := false
-
 	mu.Lock()
 	if _, exists := blockedIPs[ip]; exists {
 		alreadyBlocked = true
 	} else {
-		// Add to our blocklist
-		blockedIPs[ip] = struct{}{}
+		blockedIPs[ip] = struct{}{} // Add to internal list first
 	}
 	mu.Unlock()
 
-	// If the IP is already blocked, we don't need to do anything else
 	if alreadyBlocked {
 		if debug {
-			log.Printf("IP %s is already in the blocklist, skipping", ip)
+			log.Printf("IP %s is already in the blocklist, skipping firewall add", ip)
 		}
 		return
 	}
 
-	// Add the appropriate firewall rule (Block or Redirect)
+	// Add the appropriate firewall rule
 	var err error
 	if challengeEnable {
-		err = addRedirectRule(ip)
-		if err != nil {
-			log.Printf("Failed to add redirect rule for IP %s: %v", ip, err)
-		}
+		err = fwManager.AddRedirectRule(ip)
 	} else {
-		err = addBlockRule(ip)
-		if err != nil {
-			log.Printf("Failed to add block rule for IP %s: %v", ip, err)
-		}
+		err = fwManager.AddBlockRule(ip)
 	}
 
-	// If adding the rule failed, remove from blocklist and return
 	if err != nil {
+		log.Printf("Failed to add firewall rule for IP %s: %v", ip, err)
 		mu.Lock()
-		delete(blockedIPs, ip)
+		delete(blockedIPs, ip) // Rollback internal state if firewall add failed
 		mu.Unlock()
 		return
 	}
 
-	// Save the updated blocklist - don't hold the mutex while doing this
+	// Save the updated blocklist
 	if err := saveBlockList(); err != nil {
 		log.Printf("Warning: Failed to save blocklist after blocking IP %s: %v", ip, err)
-		// Log more details about the error in debug mode
-		if debug {
-			log.Printf("Error details: %v", err)
-			// Try to check if the directory exists and is writable
-			dir := filepath.Dir(blocklistFilePath)
-			if _, err := os.Stat(dir); os.IsNotExist(err) {
-				log.Printf("Directory %s does not exist", dir)
-			} else {
-				// Try to create a test file to check permissions
-				testFile := filepath.Join(dir, "test.txt")
-				if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-					log.Printf("Cannot write to directory %s: %v", dir, err)
-				} else {
-					os.Remove(testFile) // Clean up
-					log.Printf("Directory %s is writable", dir)
-				}
-			}
-		}
 	} else if debug {
 		log.Printf("Successfully saved blocklist to %s", blocklistFilePath)
 	}
-
-	// Log the blocking action
 	log.Printf("Blocked IP %s from file %s for %s", ip, filePath, rule)
 }
 
 // blockSubnet adds a subnet to the blocklist and blocks it in the firewall
 func blockSubnet(subnet string) {
-	// Check if the subnet is already in the blocklist
+	if fwManager == nil {
+		log.Println("Error: Firewall manager not initialized in blockSubnet")
+		return
+	}
 	alreadyBlocked := false
-
 	mu.Lock()
 	if _, exists := blockedSubnets[subnet]; exists {
 		alreadyBlocked = true
 	} else {
-		// Add to our blocklist
-		blockedSubnets[subnet] = struct{}{}
+		blockedSubnets[subnet] = struct{}{} // Add to internal list first
 	}
 
-	// If this is a new subnet block, identify IPs to remove
 	ipsToRemove := make([]string, 0)
 	if !alreadyBlocked {
 		for ip := range blockedIPs {
@@ -562,32 +587,25 @@ func blockSubnet(subnet string) {
 	}
 	mu.Unlock()
 
-	// If the subnet is already blocked, we don't need to do anything else
 	if alreadyBlocked {
 		if debug {
-			log.Printf("Subnet %s is already in the blocklist, skipping", subnet)
+			log.Printf("Subnet %s is already in the blocklist, skipping firewall add", subnet)
 		}
 		return
 	}
 
-	// Add the appropriate firewall rule (Block or Redirect)
+	// Add the appropriate firewall rule
 	var err error
 	if challengeEnable {
-		err = addRedirectRule(subnet)
-		if err != nil {
-			log.Printf("Failed to add redirect rule for subnet %s: %v", subnet, err)
-		}
+		err = fwManager.AddRedirectRule(subnet)
 	} else {
-		err = addBlockRule(subnet)
-		if err != nil {
-			log.Printf("Failed to add block rule for subnet %s: %v", subnet, err)
-		}
+		err = fwManager.AddBlockRule(subnet)
 	}
 
-	// If adding the rule failed, remove from blocklist and return
 	if err != nil {
+		log.Printf("Failed to add firewall rule for subnet %s: %v", subnet, err)
 		mu.Lock()
-		delete(blockedSubnets, subnet)
+		delete(blockedSubnets, subnet) // Rollback internal state
 		mu.Unlock()
 		return
 	}
@@ -595,81 +613,73 @@ func blockSubnet(subnet string) {
 	// If this is a new subnet block, remove individual IP rules for this subnet
 	if len(ipsToRemove) > 0 {
 		mu.Lock()
-		// Remove IPs from our blocklist
 		for _, ip := range ipsToRemove {
 			delete(blockedIPs, ip)
 		}
 		mu.Unlock()
 
-		// Remove from the firewall (ignore errors since we're replacing with subnet rule)
 		for _, ip := range ipsToRemove {
-			removeBlockRule(ip)
+			var removeErr error
+			if challengeEnable {
+				removeErr = fwManager.RemoveRedirectRule(ip)
+			} else {
+				removeErr = fwManager.RemoveBlockRule(ip)
+			}
+			if removeErr != nil {
+				log.Printf("Warning: Failed to remove rule for individual IP %s during subnet block %s: %v", ip, subnet, removeErr)
+			}
 		}
 	}
 
-	// Save the updated blocklist - don't hold the mutex while doing this
+	// Save the updated blocklist
 	if err := saveBlockList(); err != nil {
 		log.Printf("Warning: Failed to save blocklist after blocking subnet %s: %v", subnet, err)
-		// Log more details about the error in debug mode
-		if debug {
-			log.Printf("Error details: %v", err)
-			// Try to check if the directory exists and is writable
-			dir := filepath.Dir(blocklistFilePath)
-			if _, err := os.Stat(dir); os.IsNotExist(err) {
-				log.Printf("Directory %s does not exist", dir)
-			} else {
-				// Try to create a test file to check permissions
-				testFile := filepath.Join(dir, "test.txt")
-				if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-					log.Printf("Cannot write to directory %s: %v", dir, err)
-				} else {
-					os.Remove(testFile) // Clean up
-					log.Printf("Directory %s is writable", dir)
-				}
-			}
-		}
 	} else if debug {
 		log.Printf("Successfully saved blocklist to %s", blocklistFilePath)
 	}
-
-	// Log the blocking action
 	log.Printf("Blocked subnet %s and removed %d individual IPs", subnet, len(ipsToRemove))
 }
 
 // applyBlockList applies the current blocklist to the firewall
 func applyBlockList() error {
+	if fwManager == nil {
+		return fmt.Errorf("firewall manager not initialized")
+	}
 	mu.Lock()
-	defer mu.Unlock()
+	// Create copies of the lists to iterate over without holding the lock for too long
+	ipsToApply := make([]string, 0, len(blockedIPs))
+	for ip := range blockedIPs {
+		ipsToApply = append(ipsToApply, ip)
+	}
+	subnetsToApply := make([]string, 0, len(blockedSubnets))
+	for subnet := range blockedSubnets {
+		subnetsToApply = append(subnetsToApply, subnet)
+	}
+	mu.Unlock()
 
 	// Apply IP blocks/redirects
-	for ip := range blockedIPs {
+	for _, ip := range ipsToApply {
 		var err error
 		if challengeEnable {
-			err = addRedirectRule(ip)
-			if err != nil {
-				log.Printf("Failed to apply redirect rule for IP %s: %v", ip, err)
-			}
+			err = fwManager.AddRedirectRule(ip)
 		} else {
-			err = addBlockRule(ip)
-			if err != nil {
-				log.Printf("Failed to apply block rule for IP %s: %v", ip, err)
-			}
+			err = fwManager.AddBlockRule(ip)
+		}
+		if err != nil {
+			log.Printf("Failed to apply firewall rule for IP %s: %v", ip, err)
 		}
 	}
 
 	// Apply subnet blocks/redirects
-	for subnet := range blockedSubnets {
+	for _, subnet := range subnetsToApply {
 		var err error
 		if challengeEnable {
-			err = addRedirectRule(subnet)
-			if err != nil {
-				log.Printf("Failed to apply redirect rule for subnet %s: %v", subnet, err)
-			}
+			err = fwManager.AddRedirectRule(subnet)
 		} else {
-			err = addBlockRule(subnet)
-			if err != nil {
-				log.Printf("Failed to apply block rule for subnet %s: %v", subnet, err)
-			}
+			err = fwManager.AddBlockRule(subnet)
+		}
+		if err != nil {
+			log.Printf("Failed to apply firewall rule for subnet %s: %v", subnet, err)
 		}
 	}
 
@@ -678,7 +688,7 @@ func applyBlockList() error {
 		action = "redirect rules"
 	}
 	log.Printf("Applied %s to firewall: %d IPs, %d subnets",
-		action, len(blockedIPs), len(blockedSubnets))
+		action, len(ipsToApply), len(subnetsToApply))
 
 	return nil
 }

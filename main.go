@@ -234,12 +234,12 @@ func main() {
 					os.Exit(0)
 				}
 
-				// Now we need to set up the firewall
-				if err := setupFirewallTable(); err != nil {
-					log.Fatalf("Error setting up firewall table: %v", err)
+				// Now we need to initialize the firewall manager
+				if err := InitFirewallManager(); err != nil {
+					log.Fatalf("Error initializing firewall manager: %v", err)
 				}
 
-				// Block the IP
+				// Block the IP using the manager
 				if err := clientBlockIP(target); err != nil {
 					log.Fatalf("Error blocking IP: %v", err)
 				}
@@ -256,19 +256,19 @@ func main() {
 					os.Exit(0)
 				}
 
-				// Now we need to set up the firewall
-				if err := setupFirewallTable(); err != nil {
-					log.Fatalf("Error setting up firewall table: %v", err)
+				// Now we need to initialize the firewall manager
+				if err := InitFirewallManager(); err != nil {
+					log.Fatalf("Error initializing firewall manager: %v", err)
 				}
 
-				// Unblock the IP/Subnet
+				// Unblock the IP/Subnet using the manager
 				var unblockErr error
 				if challengeEnable {
 					// If challenge mode is enabled, we assume we need to remove redirect rules
-					unblockErr = removeRedirectRule(target)
+					unblockErr = fwManager.RemoveRedirectRule(target)
 				} else {
 					// Otherwise, remove the standard block rules
-					unblockErr = removeBlockRule(target)
+					unblockErr = fwManager.RemoveBlockRule(target)
 				}
 
 				if unblockErr != nil {
@@ -288,9 +288,9 @@ func main() {
 
 	// Server mode - continue with normal operation
 
-	// Setup our custom firewall table
-	if err := setupFirewallTable(); err != nil {
-		log.Fatalf("Error setting up firewall table: %v", err)
+	// Initialize the firewall manager (includes setup)
+	if err := InitFirewallManager(); err != nil {
+		log.Fatalf("Error initializing firewall manager: %v", err)
 	}
 
 	// Load the blocklist from file
@@ -357,8 +357,8 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Apply the blocklist to the firewall
-	if err := applyBlockList(); err != nil {
+	// Apply the blocklist to the firewall using the manager
+	if err := applyBlockList(); err != nil { // applyBlockList now uses fwManager internally
 		log.Printf("Warning: Failed to apply blocklist: %v", err)
 	}
 

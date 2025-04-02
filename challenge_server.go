@@ -356,10 +356,16 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	// --- Verification Successful ---
 	log.Printf("Verification successful for IP: %s", clientIP)
 
-	// Remove the redirect rule for this IP
-	err = removeRedirectRule(clientIP)
-	if err != nil {
-		log.Printf("Failed to remove redirect rule for %s after verification: %v", clientIP, err)
+	// Remove the redirect rule for this IP using the manager
+	var removeErr error
+	if fwManager == nil {
+		removeErr = fmt.Errorf("firewall manager not initialized in challenge handler")
+	} else {
+		removeErr = fwManager.RemoveRedirectRule(clientIP)
+	}
+
+	if removeErr != nil {
+		log.Printf("Failed to remove redirect rule for %s after verification: %v", clientIP, removeErr)
 		// Inform user, but maybe don't redirect back to challenge?
 		http.Error(w, "Verification successful, but failed to update firewall rules. Please contact administrator.", http.StatusInternalServerError)
 		return

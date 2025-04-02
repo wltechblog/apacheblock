@@ -129,12 +129,17 @@ func processCommand(msg Message) Message {
 		}
 
 	case string(UnblockCommand):
-		// First, remove the firewall rule (redirect or block)
+		// First, remove the firewall rule (redirect or block) using the manager
 		var unblockErr error
-		if challengeEnable {
-			unblockErr = removeRedirectRule(msg.Target)
+		if fwManager == nil {
+			// Should have been initialized by the server process
+			unblockErr = fmt.Errorf("firewall manager not initialized in socket handler")
 		} else {
-			unblockErr = removeBlockRule(msg.Target)
+			if challengeEnable {
+				unblockErr = fwManager.RemoveRedirectRule(msg.Target)
+			} else {
+				unblockErr = fwManager.RemoveBlockRule(msg.Target)
+			}
 		}
 
 		if unblockErr != nil {
