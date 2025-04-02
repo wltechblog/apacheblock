@@ -232,7 +232,8 @@ func startChallengeServer() {
 
 	// --- Start HTTPS Challenge Server ---
 	httpsMux := http.NewServeMux()
-	httpsMux.HandleFunc("/", handleChallengeRequest)
+	httpsMux.HandleFunc("/", handleChallengeRedirect)                     // New redirect handler for root
+	httpsMux.HandleFunc("/recaptcha-challenge", handleServeChallengePage) // New handler for the actual page
 	httpsMux.HandleFunc("/verify", handleVerifyRequest)
 
 	tlsConfig := &tls.Config{
@@ -296,8 +297,22 @@ func startChallengeServer() {
 	}()
 }
 
-// handleChallengeRequest serves the HTML page with the reCAPTCHA challenge.
-func handleChallengeRequest(w http.ResponseWriter, r *http.Request) {
+// handleChallengeRedirect handles the initial request to the root path and redirects to the challenge page.
+func handleChallengeRedirect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Preserve any query parameters (like 'error' from failed verification)
+	targetURL := "/recaptcha-challenge"
+	if r.URL.RawQuery != "" {
+		targetURL += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, targetURL, http.StatusFound) // Use 302 Found for temporary redirect
+}
+
+// handleServeChallengePage serves the HTML page with the reCAPTCHA challenge.
+func handleServeChallengePage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
@@ -362,7 +377,7 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	recaptchaResponse := r.FormValue("g-recaptcha-response")
 	if recaptchaResponse == "" {
 		log.Printf("Verification failed for %s: No reCAPTCHA response", clientIP)
-		http.Redirect(w, r, "/?error=Missing+reCAPTCHA+response", http.StatusSeeOther)
+		http.Redirect(w, r, "/recaptcha-challenge?error=Missing+reCAPTCHA+response", http.StatusSeeOther) // Redirect to new path
 		return
 	}
 
@@ -370,13 +385,13 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	verified, err := verifyRecaptcha(recaptchaResponse, clientIP)
 	if err != nil {
 		log.Printf("Error verifying reCAPTCHA for %s: %v", clientIP, err)
-		http.Redirect(w, r, "/?error=Verification+error", http.StatusSeeOther)
+		http.Redirect(w, r, "/recaptcha-challenge?error=Verification+error", http.StatusSeeOther) // Redirect to new path
 		return
 	}
 
 	if !verified {
 		log.Printf("Verification failed for %s: Invalid reCAPTCHA response", clientIP)
-		http.Redirect(w, r, "/?error=Invalid+reCAPTCHA", http.StatusSeeOther)
+		http.Redirect(w, r, "/recaptcha-challenge?error=Invalid+reCAPTCHA", http.StatusSeeOther) // Redirect to new path
 		return
 	}
 
@@ -421,8 +436,13 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	// Add timestamp for cache busting the return link
+	// Redirect back to the original requested URL if possible, otherwise root.
+	// For simplicity now, just link back to root. A more complex solution
+	// might store the original intended URL in a session or query param.
 	timestamp := time.Now().UnixMilli()
-	returnURL := fmt.Sprintf("/?t=%d", timestamp) // Append timestamp to root path
+	// We don't know the original intended destination, so link to root.
+	// Using a relative link might be better if hosted behind a proxy with path prefix.
+	returnURL := fmt.Sprintf("/?t=%d", timestamp)
 
 	fmt.Fprintf(w, `
         <!DOCTYPE html>

@@ -24,15 +24,18 @@ The primary goal is to implement the reCAPTCHA-based unblocking mechanism as req
     -   Fixed deadlock in `applyBlockList` by removing redundant checks (`firewall.go`).
     -   Corrected firewall rule addition logic to use delete-then-insert (`firewall.go`).
     -   Fixed various compiler/syntax errors during development.
+    -   Modified challenge server to issue a 302 redirect to `/recaptcha-challenge` to avoid caching issues (`challenge_server.go`).
 -   Updated `README.md` with feature documentation.
 -   Updated Memory Bank files (`productContext.md`, `systemPatterns.md`, `techContext.md`).
 
 ## Next Steps
 
-1.  **Update `progress.md`:** Reflect the completed implementation and fixes.
-2.  **Testing:** Implement unit/integration tests for the challenge server and firewall interactions.
-3.  **Commit Changes:** Commit Memory Bank updates.
-4.  **Present Completion:** Inform the user of the completed implementation and documentation updates.
+1.  **Update `progress.md`:** Reflect the completed implementation and fixes, including the 302 redirect.
+2.  **Update `systemPatterns.md`:** Note the 302 redirect pattern.
+3.  **Update `productContext.md`:** Update the challenge page flow description.
+4.  **Testing:** Implement unit/integration tests for the challenge server and firewall interactions.
+5.  **Commit Changes:** Commit code and Memory Bank updates.
+6.  **Present Completion:** Inform the user of the completed implementation and documentation updates.
 
 ## Active Decisions & Considerations
 
@@ -42,3 +45,4 @@ The primary goal is to implement the reCAPTCHA-based unblocking mechanism as req
 -   **HTML Template:** Currently embedded in Go code.
 -   **Temporary Whitelisting:** Implemented with configurable duration.
 -   **Duplicate Rule Prevention:** Delete-then-insert pattern implemented for adding rules.
+-   **(Challenge) Caching:** Uses a 302 redirect to a dedicated challenge path (`/recaptcha-challenge`) to prevent caching of the initial blocked response. The challenge page itself and the success page use no-cache HTTP headers. The success page link includes a timestamp query parameter for cache busting.

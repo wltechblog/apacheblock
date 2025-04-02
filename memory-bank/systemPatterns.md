@@ -50,7 +50,8 @@ graph TD
     *   Starts an HTTPS server listening on `challengePort` if `challengeEnable` is true.
     *   Generates an in-memory snakeoil certificate at startup (`generateAndLoadSnakeoilCert`).
     *   Uses `crypto/tls.Config.GetCertificate` for SNI: attempts to load domain-specific certs (stripping `www.`), falls back to snakeoil cert if needed.
-    *   Serves an HTML page (`/`) with no-cache headers and the reCAPTCHA widget.
+    *   Handles requests to `/` by issuing a 302 redirect to `/recaptcha-challenge`.
+    *   Serves the actual HTML challenge page on `/recaptcha-challenge` with no-cache headers and the reCAPTCHA widget.
     *   Handles verification requests (`/verify`): validates reCAPTCHA with Google, calls `removeRedirectRule`, adds IP to temporary whitelist (`addTempWhitelist`), and serves a success page with no-cache headers and cache-busting link.
     *   Suppresses TLS handshake errors via `http.Server.ErrorLog`.
 9.  **Main Orchestration (`main.go`):** Initializes components, loads configuration, generates snakeoil cert (if challenge enabled), starts the log monitor, socket server, challenge server (if enabled), and periodic tasks (including temp whitelist cleanup), handles graceful shutdown.
@@ -63,4 +64,4 @@ graph TD
 -   **State Management:** Blocked IPs/subnets persisted to JSON (`blocklist.json`). Temporary whitelist is in-memory only. Log file processing state (`fileStates`) is in-memory.
 -   **(Challenge) HTTPS Handling:** Standard Go `net/http` and `crypto/tls`. Uses `GetCertificate` for SNI and in-memory snakeoil certificate generation/fallback. Suppresses `http.Server` errors (including TLS handshake) via `ErrorLog`.
 -   **(Challenge) reCAPTCHA:** Server-side verification flow using Google's v2 API.
--   **(Challenge) Caching:** Uses no-cache HTTP headers and timestamp query parameter on success link to mitigate browser caching issues.
+-   **(Challenge) Caching:** Uses a 302 redirect from `/` to `/recaptcha-challenge` to prevent caching of the initial blocked response. The challenge page (`/recaptcha-challenge`) and success page (`/verify` response) use no-cache HTTP headers. The success page link includes a timestamp query parameter for cache busting.
