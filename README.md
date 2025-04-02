@@ -11,6 +11,7 @@ Apache Block is a security tool for web servers that monitors log files for susp
 - Persists blocklist between restarts
 - Provides client mode for manual management of blocked IPs and subnets
 - Uses a dedicated iptables chain for better organization of firewall rules
+- **(New)** Optional reCAPTCHA challenge for blocked IPs instead of immediate drop
 
 ## Requirements
 
@@ -332,7 +333,59 @@ subnetThreshold = 3
 
 # Number of log lines to process at startup
 startupLines = 5000
+
+# --- Challenge Feature Configuration ---
+
+# Enable the reCAPTCHA challenge feature (true/false)
+# If true, instead of dropping traffic, IPs will be redirected to the challengePort.
+challengeEnable = false
+
+# Port for the internal HTTPS challenge server to listen on
+challengePort = 4443
+
+# Path to the directory containing SSL certificates ([domain].key, [domain].crt)
+# ApacheBlock will load certificates dynamically based on the requested domain (SNI).
+# It will strip 'www.' prefix, so 'example.com.crt' works for both domains.
+# If a specific cert isn't found, it falls back to an in-memory self-signed cert.
+challengeCertPath = /etc/apacheblock/certs
+
+# Google reCAPTCHA v2 Site Key (visible in HTML)
+recaptchaSiteKey = YOUR_RECAPTCHA_SITE_KEY
+
+# Google reCAPTCHA v2 Secret Key (keep private)
+recaptchaSecretKey = YOUR_RECAPTCHA_SECRET_KEY
+
+# Duration for which an IP remains whitelisted after solving a challenge (e.g., 5m, 1h)
+challengeTempWhitelistDuration = 5m
 ```
+
+## reCAPTCHA Challenge Feature (Optional)
+
+Instead of immediately blocking traffic from a suspicious IP using `iptables DROP`, Apache Block can be configured to redirect the user to an internal HTTPS server that presents a Google reCAPTCHA v2 challenge.
+
+**How it works:**
+
+1.  **Enable:** Set `challengeEnable = true` in the configuration file.
+2.  **Configure:** Provide your Google reCAPTCHA v2 Site Key (`recaptchaSiteKey`) and Secret Key (`recaptchaSecretKey`), the port for the internal server (`challengePort`), and the path to your SSL certificates (`challengeCertPath`).
+3.  **Redirection:** When an IP is flagged, Apache Block adds `iptables` rules to redirect HTTP and HTTPS traffic from that IP to the `challengePort`. (Currently requires `firewallType = iptables`).
+4.  **Challenge Server:** Apache Block runs an internal HTTPS server on `challengePort`.
+    *   It uses SNI to identify the requested domain.
+    *   It attempts to load the corresponding certificate (`domain.crt`, `domain.key`) from `challengeCertPath`. It automatically handles `www.` prefixes (e.g., `example.com.crt` works for `www.example.com`).
+    *   If a specific certificate isn't found, it falls back to a self-signed certificate generated in memory at startup (this will cause browser warnings but allows the challenge to be presented).
+    *   It serves an HTML page containing the reCAPTCHA widget.
+5.  **Verification:** When the user submits the reCAPTCHA, the server verifies the response with Google using your secret key.
+6.  **Unblocking:** Upon successful verification:
+    *   The `iptables` redirect rules for the user's IP are removed.
+    *   The user's IP is added to a temporary whitelist for the duration specified by `challengeTempWhitelistDuration` (default 5 minutes) to prevent immediate re-blocking.
+    *   A success page is displayed.
+
+**Requirements for Challenge Feature:**
+
+*   `challengeEnable = true` in configuration.
+*   Valid Google reCAPTCHA v2 Site and Secret keys.
+*   A directory (`challengeCertPath`) containing valid SSL certificates (`.crt`, `.key`) named after the domains being protected (e.g., `example.com.crt`, `example.com.key`).
+*   `firewallType = iptables` (nftables redirect support not yet implemented).
+*   The `challengePort` must be accessible to the users being redirected.
 
 ## Command-line Options
 
@@ -347,7 +400,8 @@ startupLines = 5000
 | `-domainWhitelist` | `/etc/apacheblock/domainwhitelist.txt` | Path to domain whitelist file |
 | `-blocklist` | `/etc/apacheblock/blocklist.json` | Path to blocklist file |
 | `-rules` | `/etc/apacheblock/rules.json` | Path to rules file |
-| `-table` | `apacheblock` | Name of the iptables chain to use |
+| `-table` | `apacheblock` | Name of the firewall chain to use (iptables/nftables) |
+| `-firewallType` | `iptables` | Firewall type to use (`iptables` or `nftables`) - Redirects currently require iptables |
 | `-apiKey` | `""` | API key for socket authentication |
 | `-socketPath` | `/var/run/apacheblock.sock` | Path to the Unix domain socket for client-server communication |
 | `-debug` | `false` | Enable debug mode for basic logging |
@@ -372,6 +426,12 @@ startupLines = 5000
 | `-threshold` | `3` | Number of suspicious requests to trigger IP blocking |
 | `-subnetThreshold` | `3` | Number of IPs from a subnet to trigger subnet blocking |
 | `-startupLines` | `5000` | Number of log lines to process at startup |
+| `-challengeEnable` | `false` | Enable the reCAPTCHA challenge feature |
+| `-challengePort` | `4443` | Port for the internal HTTPS challenge server |
+| `-challengeCertPath` | `/etc/apacheblock/certs` | Path to directory containing SSL certificates for challenge server |
+| `-recaptchaSiteKey` | `""` | Google reCAPTCHA v2 Site Key |
+| `-recaptchaSecretKey` | `""` | Google reCAPTCHA v2 Secret Key |
+| `-challengeTempWhitelistDuration` | `5m` | Duration for temporary whitelist after successful challenge |
 
 ## Rules Configuration
 
