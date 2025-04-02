@@ -38,7 +38,7 @@ The primary goal is to implement the reCAPTCHA-based unblocking mechanism as req
 ## Active Decisions & Considerations
 
 -   **Firewall Tool:** Redirect feature currently only supports `iptables`. `nftables` support would require implementing equivalent NAT redirect rules.
--   **Certificate Loading:** Uses `tls.LoadX509KeyPair`, which requires the `.crt` file specified in `challengeCertPath` (e.g., `yourdomain.com.crt`) to contain the **full certificate chain** (server cert + intermediates), typically found in `fullchain.pem` from ACME clients. Snakeoil fallback implemented, but relies on successful in-memory generation at startup.
+-   **Certificate Loading:** Uses `tls.LoadX509KeyPair` and expects certificate files named `[domain]_fullchain.pem` and key files named `[domain].key` within the `challengeCertPath`. The `_fullchain.pem` file MUST contain the full certificate chain (server cert + intermediates). Snakeoil fallback implemented, but relies on successful in-memory generation at startup.
 -   **reCAPTCHA Version:** Using reCAPTCHA v2.
 -   **HTML Template:** Currently embedded in Go code.
 -   **Temporary Whitelisting:** Implemented with configurable duration.

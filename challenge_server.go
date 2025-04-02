@@ -249,7 +249,9 @@ func startChallengeServer() {
 				}
 			}
 
-			certPath := filepath.Join(challengeCertPath, baseDomain+".crt")
+			// Use the specified fullchain naming convention
+			certPath := filepath.Join(challengeCertPath, baseDomain+"_fullchain.pem")
+			// Assume the key file still follows the [domain].key pattern unless specified otherwise
 			keyPath := filepath.Join(challengeCertPath, baseDomain+".key")
 
 			// Log cert loading attempt only in debug
