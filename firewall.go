@@ -140,6 +140,20 @@ func flushFirewallTable() error {
 // This improved version checks if the rule already exists before adding it
 // and includes fallback mechanisms for different iptables versions
 func addBlockRule(target string) error {
+	// --- Redundant Check: Ensure target isn't already blocked in internal state ---
+	// This check is primarily done by the caller (blockIP/blockSubnet), but added here for extra safety.
+	mu.Lock()
+	_, ipExists := blockedIPs[target]
+	_, subnetExists := blockedSubnets[target]
+	mu.Unlock()
+	if ipExists || subnetExists {
+		if debug {
+			log.Printf("addBlockRule: Target %s already present in internal blocklist map, skipping iptables check/add.", target)
+		}
+		return nil // Already considered blocked internally
+	}
+	// --- End Redundant Check ---
+
 	// First, check if iptables is available
 	if _, err := exec.LookPath("iptables"); err != nil {
 		return fmt.Errorf("iptables command not found: %v", err)
@@ -231,6 +245,20 @@ func addBlockRule(target string) error {
 
 // addRedirectRule adds an iptables rule to redirect traffic from the target IP to the challenge port
 func addRedirectRule(target string) error {
+	// --- Redundant Check: Ensure target isn't already blocked in internal state ---
+	// This check is primarily done by the caller (blockIP/blockSubnet), but added here for extra safety.
+	mu.Lock()
+	_, ipExists := blockedIPs[target]
+	_, subnetExists := blockedSubnets[target]
+	mu.Unlock()
+	if ipExists || subnetExists {
+		if debug {
+			log.Printf("addRedirectRule: Target %s already present in internal blocklist map, skipping iptables check/add.", target)
+		}
+		return nil // Already considered blocked internally
+	}
+	// --- End Redundant Check ---
+
 	if firewallType != "iptables" {
 		return fmt.Errorf("redirect rules currently only supported for iptables firewallType")
 	}
