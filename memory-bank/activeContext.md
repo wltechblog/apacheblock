@@ -25,17 +25,15 @@ The primary goal is to implement the reCAPTCHA-based unblocking mechanism as req
     -   Corrected firewall rule addition logic to use delete-then-insert (`firewall.go`).
     -   Fixed various compiler/syntax errors during development.
     -   Modified challenge server to issue a 302 redirect to `/recaptcha-challenge` to avoid caching issues (`challenge_server.go`).
+    -   Updated challenge success page to link back to the original host's homepage (`challenge_server.go`).
 -   Updated `README.md` with feature documentation.
--   Updated Memory Bank files (`productContext.md`, `systemPatterns.md`, `techContext.md`).
+-   Updated Memory Bank files (`productContext.md`, `systemPatterns.md`, `techContext.md`, `progress.md`).
 
 ## Next Steps
 
-1.  **Update `progress.md`:** Reflect the completed implementation and fixes, including the 302 redirect.
-2.  **Update `systemPatterns.md`:** Note the 302 redirect pattern.
-3.  **Update `productContext.md`:** Update the challenge page flow description.
-4.  **Testing:** Implement unit/integration tests for the challenge server and firewall interactions.
-5.  **Commit Changes:** Commit code and Memory Bank updates.
-6.  **Present Completion:** Inform the user of the completed implementation and documentation updates.
+1.  **Testing:** Implement unit/integration tests for the challenge server and firewall interactions.
+2.  **Commit Changes:** Commit code and Memory Bank updates.
+3.  **Present Completion:** Inform the user of the completed implementation and documentation updates.
 
 ## Active Decisions & Considerations
 

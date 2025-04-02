@@ -440,9 +440,17 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	// For simplicity now, just link back to root. A more complex solution
 	// might store the original intended URL in a session or query param.
 	timestamp := time.Now().UnixMilli()
-	// We don't know the original intended destination, so link to root.
-	// Using a relative link might be better if hosted behind a proxy with path prefix.
-	returnURL := fmt.Sprintf("/?t=%d", timestamp)
+	// Construct the return URL using the Host header from the request
+	// to point back to the homepage of the domain the user was accessing.
+	// Default to "/" if Host is empty, though it shouldn't be in practice for HTTPS.
+	host := r.Host
+	if host == "" {
+		host = "the site" // Fallback text if host is missing
+	}
+	// Ensure scheme is included for an absolute URL
+	returnURL := fmt.Sprintf("https://%s/?t=%d", host, timestamp)
+	// Use the host in the link text as well for clarity
+	returnHost := host
 
 	fmt.Fprintf(w, `
         <!DOCTYPE html>
@@ -451,10 +459,10 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
         <body>
             <h1>Access Restored</h1>
             <p>Your access has been successfully restored. You can now browse normally.</p>
-            <p><a href="%s">Return to site</a></p> 
+            <p><a href="%s">Return to %s</a></p> 
         </body>
         </html>
-    `, returnURL) // Use the cache-busting URL
+    `, returnURL, returnHost) // Use the constructed URL and host
 }
 
 // verifyRecaptcha sends the verification request to Google.

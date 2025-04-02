@@ -26,7 +26,7 @@ However, automated blocking can sometimes lead to false positives, blocking legi
     *   The server verifies the reCAPTCHA response with Google using the configured `recaptchaSecretKey`. If verification fails, it redirects back to `/recaptcha-challenge` with an error query parameter.
     *   If verification succeeds, ApacheBlock removes the redirect rule(s) for the user's IP from the firewall.
     *   The user's IP is added to a temporary whitelist for the duration specified by `challengeTempWhitelistDuration` to prevent immediate re-blocking by subsequent log entries.
-    *   A success page (served with no-cache headers and a cache-busting link) is displayed.
+    *   A success page (served with no-cache headers) is displayed, containing a link (with a cache-busting timestamp) back to the homepage (`https://[original-host]/`) of the domain the user was trying to access (determined from the `Host` header of the `/verify` request).
 6.  **Configuration:** Administrators can configure log paths, detection rules, blocking thresholds, whitelist/blocklist IPs, firewall type/chain, and optionally enable the challenge feature with its specific settings (`challengeEnable`, `challengePort`, `challengeCertPath`, `recaptchaSiteKey`, `recaptchaSecretKey`, `challengeTempWhitelistDuration`).
 
 ## User Experience Goals
