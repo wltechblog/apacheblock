@@ -143,6 +143,7 @@ func generateAndLoadSnakeoilCert() error {
 // startChallengeServer initializes and starts the HTTPS challenge server.
 // Assumes generateAndLoadSnakeoilCert() has already been called successfully.
 func startChallengeServer() {
+	log.Println("Starting challenge server")
 	if !challengeEnable {
 		log.Println("Challenge server disabled by configuration.")
 		return
@@ -161,7 +162,7 @@ func startChallengeServer() {
 		log.Printf("Challenge server disabled: Certificate path '%s' does not exist.", challengeCertPath)
 		return
 	}
-
+	log.Println("Challenge server enabled and configured. Starting mux.")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleChallengeRequest)
 	mux.HandleFunc("/verify", handleVerifyRequest)
