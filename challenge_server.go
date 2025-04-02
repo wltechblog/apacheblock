@@ -1,12 +1,18 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"html/template"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,6 +21,9 @@ import (
 	"strings"
 	"time"
 )
+
+// Global variable to hold the in-memory snakeoil certificate
+var snakeoilCertificate tls.Certificate
 
 const challengeHTMLTemplate = `
 <!DOCTYPE html>
@@ -62,8 +71,65 @@ func init() {
 	}
 }
 
+// generateAndLoadSnakeoilCert generates a self-signed certificate and key in memory
+// and loads it into the global snakeoilCertificate variable.
+func generateAndLoadSnakeoilCert() error {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return fmt.Errorf("failed to generate private key: %w", err)
+	}
+
+	notBefore := time.Now()
+	// Make cert valid for 10 years, similar to openssl command
+	notAfter := notBefore.Add(10 * 365 * 24 * time.Hour)
+
+	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	if err != nil {
+		return fmt.Errorf("failed to generate serial number: %w", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization: []string{"ApacheBlock SnakeOil"},
+			CommonName:   "localhost", // Common fallback CN
+		},
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		return fmt.Errorf("failed to create certificate: %w", err)
+	}
+
+	// Encode certificate and key to PEM format in memory
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
+
+	// Load the PEM data into a tls.Certificate
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return fmt.Errorf("failed to load generated key pair: %w", err)
+	}
+
+	snakeoilCertificate = cert
+	log.Println("Successfully generated and loaded in-memory snakeoil certificate.")
+	return nil
+}
+
 // startChallengeServer initializes and starts the HTTPS challenge server.
 func startChallengeServer() {
+	// Generate the snakeoil certificate first
+	if err := generateAndLoadSnakeoilCert(); err != nil {
+		log.Fatalf("Failed to generate snakeoil certificate: %v", err)
+		// Or handle differently, maybe disable server? For now, fatal.
+	}
+
 	if !challengeEnable {
 		log.Println("Challenge server disabled by configuration.")
 		return
@@ -108,12 +174,15 @@ func startChallengeServer() {
 
 			cert, err := tls.LoadX509KeyPair(certPath, keyPath)
 			if err != nil {
-				log.Printf("Challenge Server: Failed to load key pair for SNI '%s' (using base domain '%s'): %v", serverName, baseDomain, err)
-				// Fallback or default certificate could be loaded here if desired
-				return nil, fmt.Errorf("certificate unavailable for %s (base domain %s)", serverName, baseDomain)
+				// Log the specific error if debug is enabled
+				if debug {
+					log.Printf("Challenge Server: Failed to load key pair for SNI '%s' (using base domain '%s'): %v. Falling back to snakeoil.", serverName, baseDomain, err)
+				}
+				// Fallback to the generated snakeoil certificate
+				return &snakeoilCertificate, nil
 			}
 			if debug {
-				log.Printf("Challenge Server: Successfully loaded cert for SNI '%s' (using base domain '%s')", serverName, baseDomain)
+				log.Printf("Challenge Server: Successfully loaded specific cert for SNI '%s' (using base domain '%s')", serverName, baseDomain)
 			}
 			return &cert, nil
 		},
@@ -126,13 +195,18 @@ func startChallengeServer() {
 		TLSConfig:    tlsConfig,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
+		// Suppress TLS handshake errors by redirecting the server's error log
+		ErrorLog: log.New(io.Discard, "", 0),
 	}
 
 	log.Printf("Starting Challenge HTTPS server on port %d", challengePort)
 	go func() {
-		err := server.ListenAndServeTLS("", "") // Certs loaded via GetCertificate
+		// Pass snakeoil cert/key paths as placeholders; GetCertificate handles the actual loading.
+		// Using ListenAndServeTLS directly with GetCertificate is preferred.
+		err := server.ListenAndServeTLS("", "")
 		if err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Challenge server ListenAndServeTLS error: %v", err)
+			// Log fatal errors unless it's the expected server closed error.
+			log.Printf("Challenge server ListenAndServeTLS error: %v", err)
 		}
 	}()
 }
