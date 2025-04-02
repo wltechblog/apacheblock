@@ -331,6 +331,11 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// Add timestamp for cache busting the return link
+	timestamp := time.Now().UnixMilli()
+	returnURL := fmt.Sprintf("/?t=%d", timestamp) // Append timestamp to root path
+
 	fmt.Fprintf(w, `
         <!DOCTYPE html>
         <html>
@@ -338,10 +343,10 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
         <body>
             <h1>Access Restored</h1>
             <p>Your access has been successfully restored. You can now browse normally.</p>
-            <p><a href="/">Return to site</a></p> 
+            <p><a href="%s">Return to site</a></p> 
         </body>
         </html>
-    `) // Consider redirecting to original destination if possible/needed
+    `, returnURL) // Use the cache-busting URL
 }
 
 // verifyRecaptcha sends the verification request to Google.
