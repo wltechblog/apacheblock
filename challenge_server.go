@@ -74,20 +74,29 @@ func init() {
 // generateAndLoadSnakeoilCert generates a self-signed certificate and key in memory
 // and loads it into the global snakeoilCertificate variable.
 func generateAndLoadSnakeoilCert() error {
+	log.Println("[Snakeoil] Generating RSA 2048-bit private key...")
+	startTime := time.Now()
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
+		log.Printf("[Snakeoil] Error generating private key after %v: %v", time.Since(startTime), err)
 		return fmt.Errorf("failed to generate private key: %w", err)
 	}
+	log.Printf("[Snakeoil] Private key generated successfully in %v.", time.Since(startTime))
 
+	log.Println("[Snakeoil] Setting up certificate template...")
 	notBefore := time.Now()
 	// Make cert valid for 10 years, similar to openssl command
 	notAfter := notBefore.Add(10 * 365 * 24 * time.Hour)
 
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	log.Println("[Snakeoil] Generating serial number...")
+	startTime = time.Now()
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
+		log.Printf("[Snakeoil] Error generating serial number after %v: %v", time.Since(startTime), err)
 		return fmt.Errorf("failed to generate serial number: %w", err)
 	}
+	log.Printf("[Snakeoil] Serial number generated successfully in %v.", time.Since(startTime))
 
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
@@ -101,19 +110,28 @@ func generateAndLoadSnakeoilCert() error {
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 	}
+	log.Println("[Snakeoil] Certificate template created.")
 
+	log.Println("[Snakeoil] Creating certificate...")
+	startTime = time.Now()
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
 	if err != nil {
+		log.Printf("[Snakeoil] Error creating certificate after %v: %v", time.Since(startTime), err)
 		return fmt.Errorf("failed to create certificate: %w", err)
 	}
+	log.Printf("[Snakeoil] Certificate created successfully in %v.", time.Since(startTime))
 
 	// Encode certificate and key to PEM format in memory
+	log.Println("[Snakeoil] Encoding certificate and key to PEM...")
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
+	log.Println("[Snakeoil] PEM encoding complete.")
 
 	// Load the PEM data into a tls.Certificate
+	log.Println("[Snakeoil] Loading PEM data into tls.Certificate...")
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
+		log.Println("[Snakeoil] Error loading generated key pair:", err)
 		return fmt.Errorf("failed to load generated key pair: %w", err)
 	}
 

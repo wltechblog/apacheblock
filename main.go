@@ -372,14 +372,21 @@ func main() {
 
 	// Generate snakeoil certificate if challenge feature might be used
 	if challengeEnable {
+		log.Println("[Startup] Challenge feature enabled, attempting to generate snakeoil certificate...")
 		if err := generateAndLoadSnakeoilCert(); err != nil {
 			// Log fatal because the challenge server relies on this for fallback
-			log.Fatalf("Failed to generate snakeoil certificate: %v", err)
+			log.Fatalf("[Startup] Failed to generate snakeoil certificate: %v", err)
 		}
+		log.Println("[Startup] Snakeoil certificate generated successfully.")
+	} else {
+		log.Println("[Startup] Challenge feature disabled, skipping snakeoil certificate generation.")
 	}
+	// Correctly closed if/else block
 
 	// Start the challenge server if enabled
+	log.Println("[Startup] Attempting to start challenge server (if enabled)...")
 	startChallengeServer()
+	log.Println("[Startup] Returned from startChallengeServer function call.") // Note: This logs after the goroutine inside startChallengeServer is launched, not after the server is fully listening.
 
 	// Set up the log file watcher
 	watcher, err := setupLogWatcher()
