@@ -226,49 +226,64 @@ func addRedirectRule(target string) error {
 		return fmt.Errorf("iptables command not found: %v", err)
 	}
 
-	challengePortStr := fmt.Sprintf("%d", challengePort)
+	challengeHTTPSPortStr := fmt.Sprintf("%d", challengePort)    // Port for HTTPS challenge server
+	challengeHTTPPortStr := fmt.Sprintf("%d", challengeHTTPPort) // Port for HTTP redirector
 
 	// Define the rule specifications for adding (using -I for insert at top)
-	ruleSpecs := [][]string{
-		// Port 80 rule spec
-		{"-t", "nat", "-s", target, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", challengePortStr},
-		// Port 443 rule spec
-		{"-t", "nat", "-s", target, "-p", "tcp", "--dport", "443", "-j", "REDIRECT", "--to-port", challengePortStr},
+	// Port 80 traffic redirects to the HTTP redirector port
+	// Port 443 traffic redirects to the HTTPS challenge port
+	addRuleSpecs := [][]string{ // Use distinct name for add specs
+		// Port 80 rule spec for adding -> Redirect to HTTP Port
+		{"-w", "-t", "nat", "-I", "PREROUTING", "1", "-s", target, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", challengeHTTPPortStr},
+		// Port 443 rule spec for adding -> Redirect to HTTPS Port
+		{"-w", "-t", "nat", "-I", "PREROUTING", "1", "-s", target, "-p", "tcp", "--dport", "443", "-j", "REDIRECT", "--to-port", challengeHTTPSPortStr},
 	}
 
 	var firstErr error
 	rulesAdded := 0
 
-	for _, spec := range ruleSpecs {
+	// Iterate over the specs for adding rules
+	for _, addArgs := range addRuleSpecs {
+		// Define the core rule spec (used for delete/check) by removing action/position/wait flags
+		spec := make([]string, 0, len(addArgs)-3) // Estimate capacity
+		for i, arg := range addArgs {
+			if i > 0 && addArgs[i-1] == "-I" { // Skip position '1' after '-I'
+				continue
+			}
+			if arg != "-w" && arg != "-I" && arg != "-D" && arg != "-C" { // Exclude action/wait flags
+				spec = append(spec, arg)
+			}
+		}
+
 		// --- Delete-then-Insert approach ---
 		// 1. Delete the rule (ignore error if it doesn't exist)
+		// Construct delete arguments: -w -D PREROUTING + spec
 		deleteArgs := append([]string{"-w", "-D", "PREROUTING"}, spec...)
 		cmd := exec.Command("iptables", deleteArgs...)
 		if debug {
-			log.Printf("Attempting delete before insert: iptables %v", deleteArgs)
+			log.Printf("Attempting delete before insert: iptables %v", strings.Join(deleteArgs, " "))
 		}
 		cmd.Run() // Ignore error
 
-		// 2. Insert the rule at the top
-		insertArgs := append([]string{"-w", "-I", "PREROUTING", "1"}, spec...)
-		cmd = exec.Command("iptables", insertArgs...)
+		// 2. Insert the rule at the top using the original addArgs (which include -I 1)
+		cmd = exec.Command("iptables", addArgs...)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			// Log failure but continue to try adding the other rule
-			log.Printf("Failed to insert redirect rule (iptables %v): %v, output: %s", strings.Join(insertArgs, " "), err, string(output))
+			log.Printf("Failed to insert redirect rule (iptables %v): %v, output: %s", strings.Join(addArgs, " "), err, string(output))
 			if firstErr == nil {
 				firstErr = err // Store the first error encountered
 			}
 		} else {
 			if debug {
-				log.Printf("Ensured redirect rule exists: iptables %v", strings.Join(insertArgs, " "))
+				log.Printf("Ensured redirect rule exists: iptables %v", strings.Join(addArgs, " "))
 			}
 			rulesAdded++
 		}
 	}
 
 	if rulesAdded > 0 {
-		log.Printf("Ensured redirect rules are present for %s to port %d", target, challengePort)
+		log.Printf("Ensured redirect rules are present for %s (Port 80 -> %s, Port 443 -> %s)", target, challengeHTTPPortStr, challengeHTTPSPortStr)
 	}
 
 	// Return the first error encountered, if any
@@ -289,14 +304,17 @@ func removeRedirectRule(target string) error {
 		return fmt.Errorf("iptables command not found: %v", err)
 	}
 
-	challengePortStr := fmt.Sprintf("%d", challengePort)
+	challengeHTTPSPortStr := fmt.Sprintf("%d", challengePort)    // Port for HTTPS challenge server
+	challengeHTTPPortStr := fmt.Sprintf("%d", challengeHTTPPort) // Port for HTTP redirector
 
 	// Define the rule specifications (without -C or -D)
+	// Port 80 traffic redirects to the HTTP redirector port
+	// Port 443 traffic redirects to the HTTPS challenge port
 	ruleSpecs := [][]string{
-		// Port 80 rule spec
-		{"-t", "nat", "-s", target, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", challengePortStr},
-		// Port 443 rule spec
-		{"-t", "nat", "-s", target, "-p", "tcp", "--dport", "443", "-j", "REDIRECT", "--to-port", challengePortStr},
+		// Port 80 rule spec -> Redirect to HTTP Port
+		{"-t", "nat", "-s", target, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", challengeHTTPPortStr},
+		// Port 443 rule spec -> Redirect to HTTPS Port
+		{"-t", "nat", "-s", target, "-p", "tcp", "--dport", "443", "-j", "REDIRECT", "--to-port", challengeHTTPSPortStr},
 	}
 
 	var errors []string

@@ -226,6 +226,15 @@ func readConfigFile(configPath string) error {
 			} else {
 				log.Printf("Warning: Invalid challengeTempWhitelistDuration value: %s", value)
 			}
+		case "challengeHTTPPort": // New
+			if iVal, err := strconv.Atoi(value); err == nil && iVal > 0 && iVal < 65536 {
+				challengeHTTPPort = iVal
+				if debug {
+					log.Printf("Config: Set challengeHTTPPort to %d", iVal)
+				}
+			} else {
+				log.Printf("Warning: Invalid challengeHTTPPort value: %s (must be between 1 and 65535)", value)
+			}
 		default:
 			log.Printf("Warning: Unknown configuration key: %s", key)
 		}
@@ -325,6 +334,9 @@ recaptchaSecretKey = YOUR_RECAPTCHA_SECRET_KEY
 
 # Duration for which an IP remains whitelisted after solving a challenge (e.g., 5m, 1h)
 challengeTempWhitelistDuration = 5m
+
+# Port for the internal HTTP server that redirects to the HTTPS challenge server (listens on HTTP)
+challengeHTTPPort = 8088
 `
 
 	return os.WriteFile(configPath, []byte(content), 0644)

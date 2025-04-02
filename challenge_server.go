@@ -140,10 +140,35 @@ func generateAndLoadSnakeoilCert() error {
 	return nil
 }
 
-// startChallengeServer initializes and starts the HTTPS challenge server.
+// httpRedirectHandler redirects HTTP requests to HTTPS on the main challenge port.
+func httpRedirectHandler(w http.ResponseWriter, r *http.Request) {
+	// Determine the target host; use the Host header, fallback to server address if needed
+	targetHost := r.Host
+	if targetHost == "" {
+		// If Host header is missing, try to construct from server config (might need adjustment)
+		// For simplicity, we might just redirect to the configured HTTPS port without specific host
+		targetHost = fmt.Sprintf("localhost:%d", challengePort) // Fallback, might not be ideal
+	} else {
+		// Ensure the target host uses the main HTTPS challenge port
+		host, _, err := net.SplitHostPort(targetHost)
+		if err != nil { // Likely no port specified, assume default HTTP port
+			host = targetHost
+		}
+		targetHost = fmt.Sprintf("%s:%d", host, challengePort)
+	}
+
+	targetURL := "https://" + targetHost + r.URL.RequestURI()
+	if debug {
+		log.Printf("HTTP Redirector: Redirecting %s to %s", r.URL.String(), targetURL)
+	}
+	http.Redirect(w, r, targetURL, http.StatusMovedPermanently)
+}
+
+// startChallengeServer initializes and starts the HTTPS challenge server
+// and the HTTP redirector server.
 // Assumes generateAndLoadSnakeoilCert() has already been called successfully.
 func startChallengeServer() {
-	log.Println("Starting challenge server")
+	log.Println("Starting challenge server components...")
 	if !challengeEnable {
 		log.Println("Challenge server disabled by configuration.")
 		return
@@ -162,10 +187,29 @@ func startChallengeServer() {
 		log.Printf("Challenge server disabled: Certificate path '%s' does not exist.", challengeCertPath)
 		return
 	}
-	log.Println("Challenge server enabled and configured. Starting mux.")
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", handleChallengeRequest)
-	mux.HandleFunc("/verify", handleVerifyRequest)
+	log.Println("Challenge server enabled and configured.")
+
+	// --- Start HTTP Redirector Server ---
+	httpMux := http.NewServeMux()
+	httpMux.HandleFunc("/", httpRedirectHandler)
+	httpServer := &http.Server{
+		Addr:         fmt.Sprintf(":%d", challengeHTTPPort),
+		Handler:      httpMux,
+		ReadTimeout:  5 * time.Second, // Shorter timeout for simple redirect
+		WriteTimeout: 5 * time.Second,
+	}
+	log.Printf("Starting Challenge HTTP redirector server on port %d", challengeHTTPPort)
+	go func() {
+		err := httpServer.ListenAndServe()
+		if err != nil && err != http.ErrServerClosed {
+			log.Printf("Challenge HTTP redirector server ListenAndServe error: %v", err)
+		}
+	}()
+
+	// --- Start HTTPS Challenge Server ---
+	httpsMux := http.NewServeMux()
+	httpsMux.HandleFunc("/", handleChallengeRequest)
+	httpsMux.HandleFunc("/verify", handleVerifyRequest)
 
 	tlsConfig := &tls.Config{
 		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -203,9 +247,9 @@ func startChallengeServer() {
 		MinVersion: tls.VersionTLS12, // Enforce modern TLS versions
 	}
 
-	server := &http.Server{
+	httpsServer := &http.Server{
 		Addr:         fmt.Sprintf(":%d", challengePort),
-		Handler:      mux,
+		Handler:      httpsMux,
 		TLSConfig:    tlsConfig,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
@@ -217,7 +261,7 @@ func startChallengeServer() {
 	go func() {
 		// Pass snakeoil cert/key paths as placeholders; GetCertificate handles the actual loading.
 		// Using ListenAndServeTLS directly with GetCertificate is preferred.
-		err := server.ListenAndServeTLS("", "")
+		err := httpsServer.ListenAndServeTLS("", "")
 		if err != nil && err != http.ErrServerClosed {
 			// Log fatal errors unless it's the expected server closed error.
 			log.Printf("Challenge server ListenAndServeTLS error: %v", err)

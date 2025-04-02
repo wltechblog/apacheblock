@@ -49,11 +49,12 @@ var (
 
 	// Challenge Feature Configuration
 	challengeEnable                bool          = false
-	challengePort                  int           = 4443 // Default challenge port
+	challengePort                  int           = 4443 // Default challenge HTTPS port
+	challengeHTTPPort              int           = 8088 // New: Default challenge HTTP redirect port
 	challengeCertPath              string        = "/etc/apacheblock/certs"
 	recaptchaSiteKey               string        = ""
 	recaptchaSecretKey             string        = ""
-	challengeTempWhitelistDuration time.Duration = 5 * time.Minute // New: Duration for temp whitelist
+	challengeTempWhitelistDuration time.Duration = 5 * time.Minute // Duration for temp whitelist
 
 	// Internal State (Temporary Whitelist)
 	tempWhitelist      map[string]time.Time // Map IP to expiry time
