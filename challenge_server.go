@@ -323,6 +323,15 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Successfully removed redirect rule for %s", clientIP)
 
+	// Remove IP from internal blocklist state and save
+	if err := clientUnblockIP(clientIP); err != nil {
+		// Log error, but proceed as firewall rule was removed.
+		// The blocklist might be out of sync until next save/restart.
+		log.Printf("Error updating internal blocklist for %s after challenge: %v", clientIP, err)
+	} else {
+		log.Printf("Successfully removed %s from internal blocklist.", clientIP)
+	}
+
 	// Add IP to temporary whitelist
 	addTempWhitelist(clientIP)
 
