@@ -158,76 +158,55 @@ func addBlockRule(target string) error {
 		}
 	}
 
-	// Check if the rule for port 80 already exists (use -n to disable DNS lookups)
-	cmd := exec.Command("iptables", "-w", "-t", "filter", "-C", firewallChain, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP") // Renamed variable
+	// --- Delete-then-Insert approach for Port 80 ---
+	// 1. Delete the rule (ignore error if it doesn't exist)
+	deleteArgs80 := []string{"-w", "-t", "filter", "-D", firewallChain, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP"}
+	cmd := exec.Command("iptables", deleteArgs80...)
+	if debug {
+		log.Printf("Attempting delete before insert: iptables %v", deleteArgs80)
+	}
+	cmd.Run() // Ignore error, rule might not exist
+
+	// 2. Insert the rule at the top
+	insertArgs80 := []string{"-w", "-t", "filter", "-I", firewallChain, "1", "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP"}
+	cmd = exec.Command("iptables", insertArgs80...)
 	output, err := cmd.CombinedOutput()
-	port80Exists := err == nil
-
-	if err != nil && debug {
-		log.Printf("Check for port 80 rule returned: %v, output: %s", err, string(output))
+	if err != nil {
+		// If insert fails after delete attempt, it's a real error
+		log.Printf("Failed to insert block rule for %s port 80: %v, output: %s", target, err, string(output))
+		// Continue to try port 443, but report error later
+	} else if debug {
+		log.Printf("Ensured block rule exists for %s on port 80", target)
 	}
+	err80 := err // Store potential error
 
-	// Check if the rule for port 443 already exists (use -n to disable DNS lookups)
-	cmd = exec.Command("iptables", "-w", "-t", "filter", "-C", firewallChain, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP") // Renamed variable
+	// --- Delete-then-Insert approach for Port 443 ---
+	// 1. Delete the rule (ignore error if it doesn't exist)
+	deleteArgs443 := []string{"-w", "-t", "filter", "-D", firewallChain, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP"}
+	cmd = exec.Command("iptables", deleteArgs443...)
+	if debug {
+		log.Printf("Attempting delete before insert: iptables %v", deleteArgs443)
+	}
+	cmd.Run() // Ignore error
+
+	// 2. Insert the rule at the top
+	insertArgs443 := []string{"-w", "-t", "filter", "-I", firewallChain, "1", "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP"}
+	cmd = exec.Command("iptables", insertArgs443...)
 	output, err = cmd.CombinedOutput()
-	port443Exists := err == nil
-
-	if err != nil && debug {
-		log.Printf("Check for port 443 rule returned: %v, output: %s", err, string(output))
+	if err != nil {
+		// If insert fails after delete attempt, it's a real error
+		log.Printf("Failed to insert block rule for %s port 443: %v, output: %s", target, err, string(output))
+	} else if debug {
+		log.Printf("Ensured block rule exists for %s on port 443", target)
 	}
+	err443 := err // Store potential error
 
-	// If both rules already exist, we're done
-	if port80Exists && port443Exists {
-		if debug {
-			log.Printf("Block rules for %s already exist in iptables", target)
-		}
-		return nil
+	// Return first error encountered, if any
+	if err80 != nil {
+		return fmt.Errorf("failed to ensure block rule for port 80: %w", err80)
 	}
-
-	// Add the rule for port 80 if it doesn't exist
-	if !port80Exists {
-		// Try the standard approach first
-		cmd = exec.Command("iptables", "-w", "-t", "filter", "-I", firewallChain, "1", "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP") // Renamed variable
-		output, err := cmd.CombinedOutput()
-
-		if err != nil {
-			log.Printf("First attempt to block %s on port 80 failed: %v, output: %s", target, err, string(output))
-
-			// Try alternative approach with append instead of insert
-			cmd = exec.Command("iptables", "-w", "-t", "filter", "-A", firewallChain, "-s", target, "-p", "tcp", "--dport", "80", "-j", "DROP") // Renamed variable
-			output, err = cmd.CombinedOutput()
-
-			if err != nil {
-				return fmt.Errorf("failed to block %s on port 80: %v, output: %s", target, err, string(output))
-			}
-		}
-
-		if debug {
-			log.Printf("Added block rule for %s on port 80", target)
-		}
-	}
-
-	// Add the rule for port 443 if it doesn't exist
-	if !port443Exists {
-		// Try the standard approach first
-		cmd = exec.Command("iptables", "-w", "-t", "filter", "-I", firewallChain, "1", "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP") // Renamed variable
-		output, err := cmd.CombinedOutput()
-
-		if err != nil {
-			log.Printf("First attempt to block %s on port 443 failed: %v, output: %s", target, err, string(output))
-
-			// Try alternative approach with append instead of insert
-			cmd = exec.Command("iptables", "-w", "-t", "filter", "-A", firewallChain, "-s", target, "-p", "tcp", "--dport", "443", "-j", "DROP") // Renamed variable
-			output, err = cmd.CombinedOutput()
-
-			if err != nil {
-				return fmt.Errorf("failed to block %s on port 443: %v, output: %s", target, err, string(output))
-			}
-		}
-
-		if debug {
-			log.Printf("Added block rule for %s on port 443", target)
-		}
+	if err443 != nil {
+		return fmt.Errorf("failed to ensure block rule for port 443: %w", err443)
 	}
 
 	return nil
@@ -249,37 +228,55 @@ func addRedirectRule(target string) error {
 
 	challengePortStr := fmt.Sprintf("%d", challengePort)
 
-	// Commands to add REDIRECT rules to the nat table's PREROUTING chain
-	cmds := [][]string{
-		{"iptables", "-w", "-t", "nat", "-I", "PREROUTING", "1", "-s", target, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", challengePortStr},
-		{"iptables", "-w", "-t", "nat", "-I", "PREROUTING", "1", "-s", target, "-p", "tcp", "--dport", "443", "-j", "REDIRECT", "--to-port", challengePortStr},
+	// Define the rule specifications for adding (using -I for insert at top)
+	ruleSpecs := [][]string{
+		// Port 80 rule spec
+		{"-t", "nat", "-s", target, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", challengePortStr},
+		// Port 443 rule spec
+		{"-t", "nat", "-s", target, "-p", "tcp", "--dport", "443", "-j", "REDIRECT", "--to-port", challengePortStr},
 	}
 
-	for _, cmdArgs := range cmds {
-		// Check if the rule already exists first
-		checkArgs := append([]string{"-w", "-t", "nat", "-C"}, cmdArgs[3:]...) // Replace -I 1 with -C
-		checkCmd := exec.Command("iptables", checkArgs...)
-		if err := checkCmd.Run(); err == nil {
-			if debug {
-				log.Printf("Redirect rule already exists: %v", cmdArgs)
-			}
-			continue // Rule exists, skip adding
-		}
+	var firstErr error
+	rulesAdded := 0
 
-		// Rule doesn't exist, add it
-		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	for _, spec := range ruleSpecs {
+		// --- Delete-then-Insert approach ---
+		// 1. Delete the rule (ignore error if it doesn't exist)
+		deleteArgs := append([]string{"-w", "-D", "PREROUTING"}, spec...)
+		cmd := exec.Command("iptables", deleteArgs...)
+		if debug {
+			log.Printf("Attempting delete before insert: iptables %v", deleteArgs)
+		}
+		cmd.Run() // Ignore error
+
+		// 2. Insert the rule at the top
+		insertArgs := append([]string{"-w", "-I", "PREROUTING", "1"}, spec...)
+		cmd = exec.Command("iptables", insertArgs...)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			// Log failure but continue to try adding the other rule
-			log.Printf("Failed to add redirect rule %v: %v, output: %s", cmdArgs, err, string(output))
-		} else if debug {
-			log.Printf("Successfully added redirect rule: %v", cmdArgs)
+			log.Printf("Failed to insert redirect rule (iptables %v): %v, output: %s", strings.Join(insertArgs, " "), err, string(output))
+			if firstErr == nil {
+				firstErr = err // Store the first error encountered
+			}
+		} else {
+			if debug {
+				log.Printf("Ensured redirect rule exists: iptables %v", strings.Join(insertArgs, " "))
+			}
+			rulesAdded++
 		}
 	}
-	// We don't return error immediately on failure of one rule, as the other might succeed.
-	// Consider if more robust error handling is needed.
-	log.Printf("Added redirect rules for %s to port %d", target, challengePort)
-	return nil // Assuming partial success is acceptable for now
+
+	if rulesAdded > 0 {
+		log.Printf("Ensured redirect rules are present for %s to port %d", target, challengePort)
+	}
+
+	// Return the first error encountered, if any
+	if firstErr != nil {
+		return fmt.Errorf("failed to ensure redirect rule(s): %w", firstErr)
+	}
+
+	return nil
 }
 
 // removeRedirectRule removes iptables rules that redirect traffic from the target IP
