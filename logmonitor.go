@@ -181,6 +181,7 @@ func handleLogFile(filePath string) {
 		Position:        0,
 		LastTimestamp:   time.Time{},
 		LastProcessedIP: "",
+		stopChan:        make(chan struct{}), // Initialize the stop channel
 	}
 	fileStates[filePath] = newState
 
@@ -221,12 +222,32 @@ func processLogFile(filePath string, state *FileState) {
 
 	// Process the file
 	reader := bufio.NewReader(state.File)
+	ticker := time.NewTicker(1 * time.Second) // Ticker for periodic checks when at EOF
+	defer ticker.Stop()
 
 	for {
+		// Check if we should stop before trying to read
+		select {
+		case <-state.stopChan:
+			log.Printf("Stop signal received for %s, exiting goroutine.", filePath)
+			return // Exit gracefully
+		default:
+			// Continue processing
+		}
+
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
 				// --- Handle EOF ---
+				// Use ticker to wait before next check, but also check stopChan
+				select {
+				case <-state.stopChan:
+					log.Printf("Stop signal received during EOF wait for %s, exiting goroutine.", filePath)
+					return
+				case <-ticker.C:
+					// Ticker fired, proceed with EOF checks
+				}
+
 				// Check current file status
 				currentFileInfo, statErr := os.Stat(filePath)
 				if os.IsNotExist(statErr) {
@@ -298,14 +319,21 @@ func processLogFile(filePath string, state *FileState) {
 						stateMutex.Unlock()
 						// No sleep, continue loop immediately to read new content
 					} else {
-						// File hasn't grown, wait before polling again
-						time.Sleep(1 * time.Second)
+						// File hasn't grown, continue loop to wait on ticker/stopChan
 					}
-					continue // Continue the loop (either reads new content or polls again after sleep)
+					continue // Continue the loop (will wait on ticker/stopChan at the top)
 				}
 			}
 
 			// --- Handle Other Read Errors ---
+			// Check stop signal before sleeping on error
+			select {
+			case <-state.stopChan:
+				log.Printf("Stop signal received after read error for %s, exiting goroutine.", filePath)
+				return
+			default:
+				// No stop signal, proceed with logging and sleeping
+			}
 			log.Printf("Error reading from file %s: %v", filePath, err) // Keep error
 			time.Sleep(1 * time.Second)
 			continue
@@ -401,9 +429,14 @@ func setupLogWatcher() (*fsnotify.Watcher, error) {
 					}
 					stateMutex.Lock()
 					if state, exists := fileStates[event.Name]; exists {
-						log.Printf("Closing handle and removing state for removed/renamed file: %s", event.Name)
+						log.Printf("Signaling goroutine, closing handle, and removing state for removed/renamed file: %s", event.Name)
+						// Signal the goroutine to stop *before* closing the file handle
+						if state.stopChan != nil {
+							close(state.stopChan)
+						}
+						// Now close the file handle
 						if state.File != nil {
-							state.File.Close() // Close the file handle
+							state.File.Close()
 						}
 						delete(fileStates, event.Name) // Remove from monitored states
 					} else if debug {

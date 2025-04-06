@@ -12,8 +12,9 @@ type FileState struct {
 	Position        int64
 	Size            int64
 	LastMod         time.Time
-	LastTimestamp   time.Time // Timestamp of the last processed log entry
-	LastProcessedIP string    // Last IP that was processed
+	LastTimestamp   time.Time     // Timestamp of the last processed log entry
+	LastProcessedIP string        // Last IP that was processed
+	stopChan        chan struct{} // Channel to signal the processing goroutine to stop
 }
 
 // Global variables
