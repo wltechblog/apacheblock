@@ -15,6 +15,7 @@
 ## What Works
 
 -   Core log monitoring and rule-based IP blocking (using either DROP or REDIRECT based on `challengeEnable`).
+-   **Log Rotation:** Handles log file rotation correctly by promptly closing old file handles using `fsnotify` events.
 -   Configuration loading, including all new challenge options.
 -   Whitelist/Blocklist management.
 -   Challenge server starts reliably, issues 302 redirect from root, serves HTML challenge page on `/recaptcha-challenge`, handles SNI/certs (including `www.` and snakeoil fallback), handles reCAPTCHA verification, removes redirect rules correctly, adds to temporary whitelist, and serves success page with cache controls.

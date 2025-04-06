@@ -394,11 +394,23 @@ func setupLogWatcher() (*fsnotify.Watcher, error) {
 					handleLogFile(event.Name)
 				}
 
-				// Handle file removal or renaming
+				// Handle file removal or renaming - Close the handle and remove state
 				if event.Op&fsnotify.Remove == fsnotify.Remove || event.Op&fsnotify.Rename == fsnotify.Rename {
 					if debug {
-						log.Printf("File removed or renamed: %s", event.Name)
-					} // Log removal/rename in debug
+						log.Printf("File removed or renamed event detected: %s", event.Name)
+					}
+					stateMutex.Lock()
+					if state, exists := fileStates[event.Name]; exists {
+						log.Printf("Closing handle and removing state for removed/renamed file: %s", event.Name)
+						if state.File != nil {
+							state.File.Close() // Close the file handle
+						}
+						delete(fileStates, event.Name) // Remove from monitored states
+					} else if debug {
+						// This might happen if the event is for a file we weren't monitoring (e.g., temp file)
+						log.Printf("Received remove/rename for non-monitored file: %s", event.Name)
+					}
+					stateMutex.Unlock()
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {

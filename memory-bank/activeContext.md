@@ -27,14 +27,16 @@ The primary goal is to implement the reCAPTCHA-based unblocking mechanism as req
     -   Modified challenge server to issue a 302 redirect to `/recaptcha-challenge` to avoid caching issues (`challenge_server.go`).
     -   Updated challenge success page to link back to the original host's homepage (`challenge_server.go`).
     -   Added `Connection: close` header to challenge success response to prevent issues with reused connections (`challenge_server.go`).
+    -   **Fixed Log Rotation Handling:** Modified `logmonitor.go` to use `fsnotify` events (`Remove`/`Rename`) to promptly close old file handles and remove monitoring state during log rotation, preventing resource leaks.
 -   Updated `README.md` with feature documentation.
 -   Updated Memory Bank files (`productContext.md`, `systemPatterns.md`, `techContext.md`, `progress.md`).
 
 ## Next Steps
 
 1.  **Testing:** Implement unit/integration tests for the challenge server and firewall interactions.
-2.  **Commit Changes:** Commit code and Memory Bank updates.
-3.  **Present Completion:** Inform the user of the completed implementation and documentation updates.
+2.  **Update Progress:** Update `progress.md` to reflect the log rotation fix.
+3.  **Commit Changes:** Commit code and Memory Bank updates.
+4.  **Present Completion:** Inform the user of the completed implementation and documentation updates.
 
 ## Active Decisions & Considerations
 
