@@ -520,6 +520,11 @@ func startPeriodicTasks(watcher *fsnotify.Watcher) {
 	// Start the temporary whitelist cleanup task separately
 	// startTempWhitelistCleanupTask logs its own start message
 	startTempWhitelistCleanupTask()
+
+	// Start the challenge logged IPs cleanup task separately
+	// startChallengeLoggedIPsCleanupTask logs its own start message
+	startChallengeLoggedIPsCleanupTask()
+
 	// Keep this log as it confirms periodic tasks are running
 	log.Println("Started periodic background tasks (log check, cleanup).")
 }

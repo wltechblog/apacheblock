@@ -47,7 +47,7 @@ const challengeHTMLTemplate = `
         <h1>Access Temporarily Restricted</h1>
         <p>Our system has detected unusual activity from your IP address ({{.IPAddress}}). To protect the service, access has been temporarily restricted.</p>
         <p>Please complete the challenge below to regain access.</p>
-        
+
         <form action="/verify" method="POST">
             <div class="g-recaptcha" data-sitekey="{{.RecaptchaSiteKey}}"></div>
             <button type="submit">Verify</button>
@@ -206,6 +206,9 @@ func startChallengeServer() {
 		return
 	}
 
+	// Start the challenge logged IPs cleanup task
+	startChallengeLoggedIPsCleanupTask()
+
 	// Check if cert path exists
 	if _, err := os.Stat(challengeCertPath); os.IsNotExist(err) {
 		log.Printf("Challenge server disabled: Certificate path '%s' does not exist.", challengeCertPath)
@@ -334,6 +337,12 @@ func handleServeChallengePage(w http.ResponseWriter, r *http.Request) {
 		clientIP = host
 	}
 
+	// Log client request with 10-minute cooldown
+	if addChallengeLoggedIP(clientIP) {
+		userAgent := r.Header.Get("User-Agent")
+		log.Printf("Challenge request from IP: %s (User-Agent: %s)", clientIP, userAgent)
+	}
+
 	data := struct {
 		IPAddress        string
 		RecaptchaSiteKey string
@@ -376,9 +385,12 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 		clientIP = host
 	}
 
+	// Get User-Agent for logging
+	userAgent := r.Header.Get("User-Agent")
+
 	recaptchaResponse := r.FormValue("g-recaptcha-response")
 	if recaptchaResponse == "" {
-		log.Printf("Verification failed for %s: No reCAPTCHA response", clientIP)
+		log.Printf("Verification failed for %s: No reCAPTCHA response (User-Agent: %s)", clientIP, userAgent)
 		http.Redirect(w, r, "/recaptcha-challenge?error=Missing+reCAPTCHA+response", http.StatusSeeOther) // Redirect to new path
 		return
 	}
@@ -386,20 +398,20 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	// Verify the reCAPTCHA response with Google
 	verified, err := verifyRecaptcha(recaptchaResponse, clientIP)
 	if err != nil {
-		log.Printf("Error verifying reCAPTCHA for %s: %v", clientIP, err)
+		log.Printf("Error verifying reCAPTCHA for %s: %v (User-Agent: %s)", clientIP, err, userAgent)
 		http.Redirect(w, r, "/recaptcha-challenge?error=Verification+error", http.StatusSeeOther) // Redirect to new path
 		return
 	}
 
 	if !verified {
-		log.Printf("Verification failed for %s: Invalid reCAPTCHA response", clientIP)
+		log.Printf("Verification failed for %s: Invalid reCAPTCHA response (User-Agent: %s)", clientIP, userAgent)
 		http.Redirect(w, r, "/recaptcha-challenge?error=Invalid+reCAPTCHA", http.StatusSeeOther) // Redirect to new path
 		return
 	}
 
 	// --- Verification Successful ---
 	// Log success unconditionally
-	log.Printf("Verification successful for IP: %s", clientIP)
+	log.Printf("Verification successful for IP: %s (User-Agent: %s)", clientIP, userAgent)
 
 	// Remove the redirect rule for this IP using the manager
 	var removeErr error
@@ -465,7 +477,7 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
         <body>
             <h1>Access Restored</h1>
             <p>Your access has been successfully restored. You can now browse normally.</p>
-            <p><a href="%s">Return to %s</a></p> 
+            <p><a href="%s">Return to %s</a></p>
         </body>
         </html>
     `, returnURL, returnHost) // Use the constructed URL and host

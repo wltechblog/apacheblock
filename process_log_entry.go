@@ -145,8 +145,11 @@ func processLogEntry(line, filePath string, state *FileState) {
 
 	// Check if we should block this IP
 	if record.Count >= ruleThreshold {
+		// Extract User-Agent if possible
+		userAgent := extractUserAgent(line, logFormat)
+
 		// Block the IP - blockIP logs the action
-		blockIP(ip, filePath, reason)
+		blockIP(ip, filePath, reason, userAgent)
 
 		// Check if we should block the subnet
 		if subnet != "" && !disableSubnetBlocking {

@@ -520,7 +520,7 @@ func removePortBlockingRules() error {
 }
 
 // blockIP adds an IP to the blocklist and blocks it in the firewall
-func blockIP(ip, filePath string, rule string) {
+func blockIP(ip, filePath string, rule string, userAgent ...string) {
 	if fwManager == nil {
 		log.Println("Error: Firewall manager not initialized in blockIP")
 		return
@@ -564,7 +564,13 @@ func blockIP(ip, filePath string, rule string) {
 	} else if debug { // Log success only in debug
 		log.Printf("Successfully saved blocklist to %s", blocklistFilePath)
 	}
-	log.Printf("Blocked IP %s from file %s for %s", ip, filePath, rule)
+
+	// Log with User-Agent if provided
+	if len(userAgent) > 0 && userAgent[0] != "" {
+		log.Printf("Blocked IP %s from file %s for %s (User-Agent: %s)", ip, filePath, rule, userAgent[0])
+	} else {
+		log.Printf("Blocked IP %s from file %s for %s", ip, filePath, rule)
+	}
 }
 
 // blockSubnet adds a subnet to the blocklist and blocks it in the firewall
