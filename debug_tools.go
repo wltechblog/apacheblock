@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os/exec"
 )
@@ -10,7 +9,7 @@ import (
 func listIPTablesRules() {
 	if debug {
 		log.Println("Listing current iptables rules for debugging:")
-		
+
 		// List filter table rules
 		log.Println("Filter table rules:")
 		cmd := exec.Command("iptables", "-t", "filter", "-L", "-v", "-n")
@@ -20,7 +19,7 @@ func listIPTablesRules() {
 		} else {
 			log.Printf("\n%s", string(output))
 		}
-		
+
 		// List NAT table rules
 		log.Println("NAT table rules:")
 		cmd = exec.Command("iptables", "-t", "nat", "-L", "-v", "-n")
@@ -37,7 +36,7 @@ func listIPTablesRules() {
 func listNFTablesRules() {
 	if debug {
 		log.Println("Listing current nftables rules for debugging:")
-		
+
 		cmd := exec.Command("nft", "list", "ruleset")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
@@ -53,9 +52,9 @@ func listFirewallRules() {
 	if !debug {
 		return
 	}
-	
+
 	log.Printf("Listing current firewall rules (type: %s)", firewallType)
-	
+
 	switch firewallType {
 	case "iptables":
 		listIPTablesRules()
