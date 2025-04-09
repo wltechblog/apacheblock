@@ -23,7 +23,13 @@ func init() {
 
 // addChallengeLoggedIP adds an IP address to the logged IPs map with a 10-minute expiry.
 // Returns true if the IP was newly added, false if it was already in the map.
+// With debug streaming enabled, we always return true to log all requests.
 func addChallengeLoggedIP(ip string) bool {
+	// If debug streaming is enabled, always return true to log all requests
+	if len(debugStreamClients) > 0 {
+		return true
+	}
+
 	challengeLoggedIPsMutex.Lock()
 	defer challengeLoggedIPsMutex.Unlock()
 

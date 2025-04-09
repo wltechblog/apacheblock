@@ -34,6 +34,7 @@ func main() {
 	unblock := flag.String("unblock", "", "Unblock an IP address or CIDR range")
 	check := flag.String("check", "", "Check if an IP address or CIDR range is blocked")
 	list := flag.Bool("list", false, "List all blocked IPs and subnets")
+	debugStream := flag.Bool("debug-stream", false, "Stream debug logs from the server")
 
 	// API key for socket authentication
 	apiKeyFlag := flag.String("apiKey", "", "API key for socket authentication")
@@ -158,7 +159,7 @@ func main() {
 	}
 
 	// Check if we're in client mode
-	clientMode := *block != "" || *unblock != "" || *check != "" || *list
+	clientMode := *block != "" || *unblock != "" || *check != "" || *list || *debugStream
 
 	if clientMode {
 		// For all client mode commands, try socket first
@@ -176,6 +177,9 @@ func main() {
 			target = *check
 		} else if *list {
 			command = ListCommand
+			target = ""
+		} else if *debugStream {
+			command = DebugCommand
 			target = ""
 		}
 
@@ -350,10 +354,22 @@ func main() {
 		os.Exit(0)
 	}
 
+	// List current firewall rules before applying blocklist (debug only)
+	if debug {
+		log.Println("Current firewall rules before applying blocklist:")
+		listFirewallRules()
+	}
+
 	// Apply the blocklist to the firewall using the manager
 	// applyBlockList logs its own summary message
 	if err := applyBlockList(); err != nil {
 		log.Printf("Warning: Failed to apply blocklist: %v", err)
+	}
+
+	// List current firewall rules after applying blocklist (debug only)
+	if debug {
+		log.Println("Current firewall rules after applying blocklist:")
+		listFirewallRules()
 	}
 
 	// Start the socket server for client communication
@@ -364,6 +380,9 @@ func main() {
 		// Keep this log as it confirms server start
 		log.Printf("Socket server started on %s", SocketPath)
 	}
+
+	// Start the debug stream heartbeat
+	startDebugStreamHeartbeat()
 
 	// Generate snakeoil certificate if challenge feature might be used
 	if challengeEnable {

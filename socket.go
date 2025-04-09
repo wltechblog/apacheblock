@@ -3,10 +3,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"time"
 )
 
 // SocketPath is the path to the Unix domain socket
@@ -19,6 +23,7 @@ type Message struct {
 	Result  string `json:"result,omitempty"`
 	Success bool   `json:"success"`
 	APIKey  string `json:"api_key,omitempty"`
+	Stream  bool   `json:"stream,omitempty"` // Indicates if this is a streaming response
 }
 
 // startSocketServer starts a Unix domain socket server to listen for commands
@@ -104,6 +109,12 @@ func handleConnection(conn net.Conn) {
 		return
 	}
 
+	// Handle debug command specially
+	if msg.Command == string(DebugCommand) {
+		handleDebugCommand(conn)
+		return
+	}
+
 	// Process the command
 	response := processCommand(msg)
 
@@ -122,6 +133,11 @@ func processCommand(msg Message) Message {
 	response.Success = false
 
 	switch msg.Command {
+	case string(DebugCommand):
+		// Debug command is handled specially in handleConnection
+		// This should not be reached in normal operation
+		response.Result = "Debug command must be handled with streaming connection"
+
 	case string(BlockCommand):
 		if err := clientBlockIP(msg.Target); err != nil {
 			response.Result = fmt.Sprintf("Failed to block %s: %v", msg.Target, err)
@@ -207,6 +223,74 @@ func processCommand(msg Message) Message {
 	return response
 }
 
+// handleDebugCommand handles a debug command by streaming log messages to the client
+func handleDebugCommand(conn net.Conn) {
+	// Send initial response to confirm connection
+	initialResponse := Message{
+		Command: string(DebugCommand),
+		Result:  "Debug stream started. Press Ctrl+C to stop.",
+		Success: true,
+		Stream:  true,
+	}
+
+	encoder := json.NewEncoder(conn)
+	if err := encoder.Encode(initialResponse); err != nil {
+		log.Printf("Error sending initial debug response: %v", err)
+		return
+	}
+
+	// Register for debug stream
+	debugChan := addDebugStreamClient()
+	defer removeDebugStreamClient(debugChan)
+
+	// Set a deadline for the first read to detect client disconnect
+	conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+
+	// Create a buffer for reading from the connection (to detect disconnects)
+	buf := make([]byte, 1)
+
+	// Stream debug messages until client disconnects
+	for {
+		select {
+		case msg, ok := <-debugChan:
+			if !ok {
+				// Channel closed
+				return
+			}
+
+			// Send the debug message
+			response := Message{
+				Command: string(DebugCommand),
+				Result:  msg,
+				Success: true,
+				Stream:  true,
+			}
+
+			if err := encoder.Encode(response); err != nil {
+				// Client likely disconnected
+				return
+			}
+
+		default:
+			// Check if client has disconnected by attempting a non-blocking read
+			conn.SetReadDeadline(time.Now())
+			_, err := conn.Read(buf)
+			if err != nil {
+				if err != io.EOF && !os.IsTimeout(err) {
+					log.Printf("Debug client disconnected: %v", err)
+				}
+				return
+			}
+
+			// Reset the deadline for the next iteration
+			conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+
+			// Small sleep to prevent CPU spinning
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+}
+
 // sendCommand sends a command to the server over the socket
 func sendCommand(command ClientCommand, target string) error {
 	// Check if the socket exists
@@ -234,6 +318,11 @@ func sendCommand(command ClientCommand, target string) error {
 		return fmt.Errorf("failed to send command: %v", err)
 	}
 
+	// Special handling for debug command
+	if command == DebugCommand {
+		return handleDebugStream(conn)
+	}
+
 	// Read the response
 	decoder := json.NewDecoder(conn)
 	var response Message
@@ -245,4 +334,45 @@ func sendCommand(command ClientCommand, target string) error {
 	fmt.Println(response.Result)
 
 	return nil
+}
+
+// handleDebugStream handles the client side of the debug stream
+func handleDebugStream(conn net.Conn) error {
+	// Read the initial response
+	decoder := json.NewDecoder(conn)
+	var response Message
+	if err := decoder.Decode(&response); err != nil {
+		return fmt.Errorf("failed to read initial debug response: %v", err)
+	}
+
+	// Print the initial message
+	fmt.Println(response.Result)
+
+	// Set up signal handling for graceful exit
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Create a goroutine to handle signals
+	go func() {
+		<-sigChan
+		fmt.Println("\nStopping debug stream...")
+		conn.Close()
+		os.Exit(0)
+	}()
+
+	// Continuously read and print debug messages
+	for {
+		var msg Message
+		if err := decoder.Decode(&msg); err != nil {
+			if err == io.EOF {
+				// Connection closed by server
+				fmt.Println("Debug stream ended by server.")
+				return nil
+			}
+			return fmt.Errorf("error reading debug stream: %v", err)
+		}
+
+		// Print the debug message
+		fmt.Print(msg.Result)
+	}
 }

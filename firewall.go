@@ -116,19 +116,82 @@ func (m *IPTablesManager) Setup() error {
 	return nil
 }
 
-// Flush removes all rules added by this tool from the filter chain.
+// Flush removes all rules added by this tool from the filter chain and NAT table.
 func (m *IPTablesManager) Flush() error {
-	log.Printf("Flushing iptables chain: %s", m.chainName)
+	// Flush the filter chain
+	log.Printf("Flushing iptables filter chain: %s", m.chainName)
 	cmd := exec.Command("iptables", "-w", "-t", "filter", "-F", m.chainName)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if strings.Contains(string(output), "No chain/target/match by that name") {
 			log.Printf("Chain %s doesn't exist, nothing to flush.", m.chainName)
-			return nil
+		} else {
+			log.Printf("Warning: Failed to flush iptables filter chain %s: %v, output: %s", m.chainName, err, string(output))
+			// Continue to try NAT cleanup
 		}
-		return fmt.Errorf("failed to flush iptables chain %s: %v, output: %s", m.chainName, err, string(output))
+	} else {
+		log.Printf("Flushed filter chain: %s", m.chainName)
 	}
-	log.Printf("Flushed filter chain: %s", m.chainName)
+
+	// Clean up NAT table redirect rules in PREROUTING chain
+	log.Printf("Cleaning up NAT redirect rules in PREROUTING chain")
+
+	// Clean up port 80 redirects
+	cleanedCount80 := 0
+	for {
+		// Find and remove any redirects to our HTTP challenge port
+		checkArgs := []string{"-w", "-t", "nat", "-C", "PREROUTING", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", fmt.Sprintf("%d", challengeHTTPPort)}
+		cmd := exec.Command("iptables", checkArgs...)
+		checkErr := cmd.Run()
+
+		if checkErr != nil {
+			// No more matching rules
+			break
+		}
+
+		// Rule exists, delete it
+		deleteArgs := []string{"-w", "-t", "nat", "-D", "PREROUTING", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", fmt.Sprintf("%d", challengeHTTPPort)}
+		deleteCmd := exec.Command("iptables", deleteArgs...)
+		deleteErr := deleteCmd.Run()
+
+		if deleteErr != nil {
+			log.Printf("Warning: Failed to delete NAT redirect rule for port 80: %v", deleteErr)
+			break
+		}
+
+		cleanedCount80++
+	}
+
+	// Clean up port 443 redirects
+	cleanedCount443 := 0
+	for {
+		// Find and remove any redirects to our HTTPS challenge port
+		checkArgs := []string{"-w", "-t", "nat", "-C", "PREROUTING", "-p", "tcp", "--dport", "443", "-j", "REDIRECT", "--to-port", fmt.Sprintf("%d", challengePort)}
+		cmd := exec.Command("iptables", checkArgs...)
+		checkErr := cmd.Run()
+
+		if checkErr != nil {
+			// No more matching rules
+			break
+		}
+
+		// Rule exists, delete it
+		deleteArgs := []string{"-w", "-t", "nat", "-D", "PREROUTING", "-p", "tcp", "--dport", "443", "-j", "REDIRECT", "--to-port", fmt.Sprintf("%d", challengePort)}
+		deleteCmd := exec.Command("iptables", deleteArgs...)
+		deleteErr := deleteCmd.Run()
+
+		if deleteErr != nil {
+			log.Printf("Warning: Failed to delete NAT redirect rule for port 443: %v", deleteErr)
+			break
+		}
+
+		cleanedCount443++
+	}
+
+	if cleanedCount80 > 0 || cleanedCount443 > 0 {
+		log.Printf("Cleaned up NAT redirect rules: %d for port 80, %d for port 443", cleanedCount80, cleanedCount443)
+	}
+
 	return nil
 }
 
@@ -493,11 +556,18 @@ func (m *NFTablesManager) parseTableName() (string, string) {
 
 // --- Helper functions previously global, now potentially methods or standalone ---
 
-// removePortBlockingRules needs refactoring to use fwManager.Flush() and clear internal state
+// removePortBlockingRules uses fwManager.Flush() to clean up all firewall rules and clears internal state
 func removePortBlockingRules() error {
 	if fwManager == nil {
 		return fmt.Errorf("firewall manager not initialized")
 	}
+
+	// List current rules before cleanup if in debug mode
+	if debug {
+		log.Println("Firewall rules before cleanup:")
+		listFirewallRules()
+	}
+
 	// Flush firewall rules using the manager
 	if err := fwManager.Flush(); err != nil {
 		log.Printf("Warning: Failed to flush firewall rules via manager: %v", err)
@@ -513,6 +583,12 @@ func removePortBlockingRules() error {
 	// Save the empty blocklist file
 	if err := saveBlockList(); err != nil {
 		log.Printf("Warning: Failed to save empty blocklist: %v", err)
+	}
+
+	// List current rules after cleanup if in debug mode
+	if debug {
+		log.Println("Firewall rules after cleanup:")
+		listFirewallRules()
 	}
 
 	log.Println("Successfully removed all port blocking rules and cleared internal state.")

@@ -121,6 +121,11 @@ sudo apacheblock -check 1.2.3.0/24
 # List all blocked IPs and subnets
 sudo apacheblock -list
 
+# Stream debug logs from the server in real-time
+# Shows all matches, firewall actions, and challenge server requests
+# Press Ctrl+C to stop
+sudo apacheblock -debug-stream
+
 # Use with API key authentication
 sudo apacheblock -block 1.2.3.4 -apiKey "your-secret-key"
 

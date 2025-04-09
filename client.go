@@ -15,6 +15,7 @@ const (
 	UnblockCommand ClientCommand = "unblock"
 	CheckCommand   ClientCommand = "check"
 	ListCommand    ClientCommand = "list"
+	DebugCommand   ClientCommand = "debug"
 )
 
 // RunClientMode executes the client mode operation
@@ -31,8 +32,8 @@ func RunClientMode(command ClientCommand, target string) error {
 		if !isValidIPOrCIDR(target) {
 			return fmt.Errorf("invalid IP address or CIDR range: %s", target)
 		}
-	case ListCommand:
-		// List command doesn't require a target
+	case ListCommand, DebugCommand:
+		// List and Debug commands don't require a target
 	default:
 		return fmt.Errorf("unknown command: %s", command)
 	}
@@ -100,6 +101,10 @@ func RunClientMode(command ClientCommand, target string) error {
 	case ListCommand:
 		// No need to set up firewall for list
 		return clientListBlocked()
+
+	case DebugCommand:
+		// Debug command is only available via socket
+		return fmt.Errorf("debug command is only available when connected to a running server")
 	}
 
 	return nil
