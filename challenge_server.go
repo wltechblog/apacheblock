@@ -337,10 +337,16 @@ func handleServeChallengePage(w http.ResponseWriter, r *http.Request) {
 		clientIP = host
 	}
 
+	// Extract domain name from request
+	domainName := r.Host
+	if host, _, err := net.SplitHostPort(domainName); err == nil {
+		domainName = host
+	}
+
 	// Log client request with 10-minute cooldown
 	if addChallengeLoggedIP(clientIP) {
 		userAgent := r.Header.Get("User-Agent")
-		log.Printf("Challenge request from IP: %s (User-Agent: %s)", clientIP, userAgent)
+		log.Printf("Challenge request from IP: %s for domain: %s (User-Agent: %s)", clientIP, domainName, userAgent)
 	}
 
 	data := struct {
@@ -388,9 +394,15 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	// Get User-Agent for logging
 	userAgent := r.Header.Get("User-Agent")
 
+	// Extract domain name from request
+	domainName := r.Host
+	if host, _, err := net.SplitHostPort(domainName); err == nil {
+		domainName = host
+	}
+
 	recaptchaResponse := r.FormValue("g-recaptcha-response")
 	if recaptchaResponse == "" {
-		log.Printf("Verification failed for %s: No reCAPTCHA response (User-Agent: %s)", clientIP, userAgent)
+		log.Printf("Verification failed for %s on domain %s: No reCAPTCHA response (User-Agent: %s)", clientIP, domainName, userAgent)
 		http.Redirect(w, r, "/recaptcha-challenge?error=Missing+reCAPTCHA+response", http.StatusSeeOther) // Redirect to new path
 		return
 	}
@@ -398,20 +410,20 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	// Verify the reCAPTCHA response with Google
 	verified, err := verifyRecaptcha(recaptchaResponse, clientIP)
 	if err != nil {
-		log.Printf("Error verifying reCAPTCHA for %s: %v (User-Agent: %s)", clientIP, err, userAgent)
+		log.Printf("Error verifying reCAPTCHA for %s on domain %s: %v (User-Agent: %s)", clientIP, domainName, err, userAgent)
 		http.Redirect(w, r, "/recaptcha-challenge?error=Verification+error", http.StatusSeeOther) // Redirect to new path
 		return
 	}
 
 	if !verified {
-		log.Printf("Verification failed for %s: Invalid reCAPTCHA response (User-Agent: %s)", clientIP, userAgent)
+		log.Printf("Verification failed for %s on domain %s: Invalid reCAPTCHA response (User-Agent: %s)", clientIP, domainName, userAgent)
 		http.Redirect(w, r, "/recaptcha-challenge?error=Invalid+reCAPTCHA", http.StatusSeeOther) // Redirect to new path
 		return
 	}
 
 	// --- Verification Successful ---
 	// Log success unconditionally
-	log.Printf("Verification successful for IP: %s (User-Agent: %s)", clientIP, userAgent)
+	log.Printf("Verification successful for IP: %s on domain %s (User-Agent: %s)", clientIP, domainName, userAgent)
 
 	// Remove the redirect rule for this IP using the manager
 	var removeErr error
@@ -422,22 +434,22 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if removeErr != nil {
-		log.Printf("Failed to remove redirect rule for %s after verification: %v", clientIP, removeErr)
+		log.Printf("Failed to remove redirect rule for %s on domain %s after verification: %v", clientIP, domainName, removeErr)
 		// Inform user, but maybe don't redirect back to challenge?
 		http.Error(w, "Verification successful, but failed to update firewall rules. Please contact administrator.", http.StatusInternalServerError)
 		return
 	}
 
 	// Log success unconditionally
-	log.Printf("Successfully removed redirect rule for %s", clientIP)
+	log.Printf("Successfully removed redirect rule for %s on domain %s", clientIP, domainName)
 
 	// Remove IP from internal blocklist state and save
 	if err := clientUnblockIP(clientIP); err != nil {
 		// Log error, but proceed as firewall rule was removed.
 		// The blocklist might be out of sync until next save/restart.
-		log.Printf("Error updating internal blocklist for %s after challenge: %v", clientIP, err)
+		log.Printf("Error updating internal blocklist for %s on domain %s after challenge: %v", clientIP, domainName, err)
 	} else if debug { // Log success only in debug
-		log.Printf("Successfully removed %s from internal blocklist.", clientIP)
+		log.Printf("Successfully removed %s from internal blocklist (domain: %s).", clientIP, domainName)
 	}
 
 	// Add IP to temporary whitelist
