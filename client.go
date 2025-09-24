@@ -187,12 +187,31 @@ func clientUnblockIP(target string) error {
 		return nil
 	}
 
-	// Remove from blocklist
+	// Remove from blocklist and access log
 	mu.Lock()
 	if strings.Contains(target, "/") {
 		delete(blockedSubnets, target)
+		// For subnets, we need to remove all IPs in that subnet from ipAccessLog
+		_, subnet, err := net.ParseCIDR(target)
+		if err == nil {
+			for ip := range ipAccessLog {
+				if parsedIP := net.ParseIP(ip); parsedIP != nil && subnet.Contains(parsedIP) {
+					delete(ipAccessLog, ip)
+					if debug {
+						log.Printf("Removed access log entry for IP %s (in unblocked subnet %s)", ip, target)
+					}
+				}
+			}
+		}
 	} else {
 		delete(blockedIPs, target)
+		// Remove the IP's access log entry so it starts fresh
+		if _, exists := ipAccessLog[target]; exists {
+			delete(ipAccessLog, target)
+			if debug {
+				log.Printf("Removed access log entry for unblocked IP %s", target)
+			}
+		}
 	}
 	mu.Unlock()
 

@@ -18,4 +18,6 @@
 - Enhanced debug logging for configuration settings
 
 ### Fixed
+- Fixed unblocking to properly clear access log entries, preventing immediate re-blocking after one detection
+- Fixed port forward duplication issue when using `-clean` flag or restarting the service
 - Fixed isIPBlocked function to return subnet information when an IP is blocked by a subnet
