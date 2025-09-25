@@ -127,18 +127,12 @@ func processLogEntry(line, filePath string, state *FileState) {
 				record.ExpiresAt = now.Add(ruleDuration)
 			}
 		} else {
-			// This is a hit for a different rule, create a new record
-			// but keep the higher count between the two
-			oldCount := record.Count
-			record.Count = 1
-			record.Reason = reason
+			// This is a hit for a different rule - increment the existing count
+			// All suspicious activity should count toward blocking, regardless of rule type
+			record.Count++
+			record.Reason = reason // Update to the latest rule that triggered
 			record.LastUpdated = now
 			record.ExpiresAt = now.Add(ruleDuration)
-
-			// If the old count was higher, keep it
-			if oldCount > record.Count {
-				record.Count = oldCount
-			}
 		}
 	}
 	mu.Unlock()

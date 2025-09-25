@@ -77,7 +77,7 @@ func testUnblockFix() {
 		}
 	}
 
-	fmt.Println("=== Test Complete ===\n")
+	fmt.Println("=== Test Complete ===")
 }
 
 // This function can be called from main() for testing
