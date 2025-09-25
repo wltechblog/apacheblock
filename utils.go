@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"net"
 	"os"
 	"time"
@@ -27,6 +28,10 @@ func skipToLastLines(file *os.File, lines int) error {
 	fileSize := fileInfo.Size()
 	if fileSize == 0 {
 		return nil
+	}
+
+	if debug {
+		log.Printf("skipToLastLines: File size=%d bytes, looking for last %d lines", fileSize, lines)
 	}
 
 	// Start from the end of the file
@@ -60,7 +65,11 @@ func skipToLastLines(file *os.File, lines int) error {
 				lineCount++
 				if lineCount >= lines {
 					// Seek to this position
-					_, err = file.Seek(position+int64(i)+1, 0)
+					finalPos := position + int64(i) + 1
+					_, err = file.Seek(finalPos, 0)
+					if debug {
+						log.Printf("skipToLastLines: Found %d lines, positioned at byte %d", lineCount, finalPos)
+					}
 					return err
 				}
 			}
@@ -69,6 +78,9 @@ func skipToLastLines(file *os.File, lines int) error {
 
 	// If we get here, we've read the entire file
 	_, err = file.Seek(0, 0)
+	if debug {
+		log.Printf("skipToLastLines: File has fewer than %d lines, positioned at beginning", lines)
+	}
 	return err
 }
 

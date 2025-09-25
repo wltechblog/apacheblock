@@ -206,6 +206,8 @@ func processLogFile(filePath string, state *FileState) {
 	}()
 
 	// Skip to the last N lines if configured
+	var startupLinesProcessed int
+	var isStartupMode bool
 	if startupLines > 0 {
 		if err := skipToLastLines(state.File, startupLines); err != nil {
 			log.Printf("Error skipping lines for file %s: %v", filePath, err) // Keep error
@@ -218,6 +220,11 @@ func processLogFile(filePath string, state *FileState) {
 			return
 		}
 		state.Position = pos
+		isStartupMode = true
+
+		if debug {
+			log.Printf("Positioned to process last %d lines from file %s at position %d", startupLines, filePath, pos)
+		}
 	}
 
 	// Process the file
@@ -341,6 +348,21 @@ func processLogFile(filePath string, state *FileState) {
 
 		// Process the line
 		trimmedLine := strings.TrimSpace(line)
+
+		// Track startup line processing
+		if isStartupMode {
+			startupLinesProcessed++
+			if debug && startupLinesProcessed <= 5 {
+				log.Printf("Processing startup line %d from %s: %s", startupLinesProcessed, filePath, trimmedLine)
+			}
+			if startupLinesProcessed == startupLines {
+				if debug {
+					log.Printf("Finished processing %d startup lines from %s, switching to monitoring mode", startupLinesProcessed, filePath)
+				}
+				isStartupMode = false
+			}
+		}
+
 		// Only log every line if verbose is enabled
 		if verbose {
 			log.Printf("Processing log line from %s: %s", filePath, trimmedLine)
