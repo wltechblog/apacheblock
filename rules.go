@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"time"
 )
 
@@ -232,7 +231,7 @@ func matchRule(line string, format string) (string, string, bool) {
 
 				// Log specific match details only in verbose
 				if verbose {
-					log.Printf("Apache match: IP=%s, Reason=%s", ip, reason)
+					log.Printf("Apache match: IP %s, Reason %s", ip, reason)
 				}
 
 				return ip, reason, true
@@ -250,7 +249,7 @@ func matchRule(line string, format string) (string, string, bool) {
 
 						// Log specific match details only in verbose
 						if verbose {
-							log.Printf("Caddy match: IP=%s, Reason=%s", entry.Request.ClientIP, reason)
+							log.Printf("Caddy match: IP %s, Reason %s", entry.Request.ClientIP, reason)
 						}
 
 						return entry.Request.ClientIP, reason, true
@@ -278,11 +277,10 @@ func matchRule(line string, format string) (string, string, bool) {
 // getRuleThreshold returns the threshold and duration for a rule by name
 func getRuleThreshold(ruleName string) (int, time.Duration) {
 	for _, rule := range rules {
-		if rule.Name == ruleName || strings.HasPrefix(ruleName, rule.Name) {
+		if rule.Name == ruleName {
 			return rule.Threshold, rule.Duration
 		}
 	}
 
-	// Default values if rule not found
 	return threshold, expirationPeriod
 }

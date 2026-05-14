@@ -22,6 +22,35 @@ import (
 	"time"
 )
 
+func isTrustedProxy(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	for _, tp := range trustedProxies {
+		if host == tp {
+			return true
+		}
+	}
+	return false
+}
+
+func getClientIP(r *http.Request) string {
+	if isTrustedProxy(r.RemoteAddr) {
+		if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+			return realIP
+		} else if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
+			parts := strings.Split(forwardedFor, ",")
+			return strings.TrimSpace(parts[0])
+		}
+	}
+	clientIP := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(clientIP); err == nil {
+		return host
+	}
+	return clientIP
+}
+
 // Global variable to hold the in-memory snakeoil certificate
 var snakeoilCertificate tls.Certificate
 
@@ -323,15 +352,7 @@ func handleServeChallengePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract client IP - handle potential proxies later if needed
-	clientIP := r.RemoteAddr
-	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
-		clientIP = realIP
-	} else if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
-		// Take the first IP in the list
-		parts := strings.Split(forwardedFor, ",")
-		clientIP = strings.TrimSpace(parts[0])
-	}
+	clientIP := getClientIP(r)
 	// Remove port if present
 	if host, _, err := net.SplitHostPort(clientIP); err == nil {
 		clientIP = host
@@ -379,14 +400,7 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract client IP (consistent with handleChallengeRequest)
-	clientIP := r.RemoteAddr
-	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
-		clientIP = realIP
-	} else if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
-		parts := strings.Split(forwardedFor, ",")
-		clientIP = strings.TrimSpace(parts[0])
-	}
+	clientIP := getClientIP(r)
 	if host, _, err := net.SplitHostPort(clientIP); err == nil {
 		clientIP = host
 	}
@@ -422,37 +436,38 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Verification Successful ---
-	// Log success unconditionally
 	log.Printf("Verification successful for IP: %s on domain %s (User-Agent: %s)", clientIP, domainName, userAgent)
 
-	// Remove the redirect rule for this IP using the manager
-	var removeErr error
 	if fwManager == nil {
-		removeErr = fmt.Errorf("firewall manager not initialized in challenge handler")
-	} else {
-		removeErr = fwManager.RemoveRedirectRule(clientIP)
-	}
-
-	if removeErr != nil {
-		log.Printf("Failed to remove redirect rule for %s on domain %s after verification: %v", clientIP, domainName, removeErr)
-		// Inform user, but maybe don't redirect back to challenge?
-		http.Error(w, "Verification successful, but failed to update firewall rules. Please contact administrator.", http.StatusInternalServerError)
+		http.Error(w, "Firewall manager not initialized.", http.StatusInternalServerError)
 		return
 	}
 
-	// Log success unconditionally
-	log.Printf("Successfully removed redirect rule for %s on domain %s", clientIP, domainName)
+	// Check if the IP is contained in a blocked subnet
+	containingSubnet := findContainingSubnet(clientIP)
+	if containingSubnet != "" {
+		if err := unblockIPFromSubnet(clientIP, containingSubnet); err != nil {
+			log.Printf("Failed to unblock IP %s from subnet %s after verification: %v", clientIP, containingSubnet, err)
+			http.Error(w, "Verification successful, but failed to update firewall rules. Please contact administrator.", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("Successfully unblocked IP %s from subnet %s after challenge verification", clientIP, containingSubnet)
+	} else {
+		removeErr := fwManager.RemoveRedirectRule(clientIP)
+		if removeErr != nil {
+			log.Printf("Failed to remove redirect rule for %s on domain %s after verification: %v", clientIP, domainName, removeErr)
+			http.Error(w, "Verification successful, but failed to update firewall rules. Please contact administrator.", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("Successfully removed redirect rule for %s on domain %s", clientIP, domainName)
 
-	// Remove IP from internal blocklist state and save
-	if err := clientUnblockIP(clientIP); err != nil {
-		// Log error, but proceed as firewall rule was removed.
-		// The blocklist might be out of sync until next save/restart.
-		log.Printf("Error updating internal blocklist for %s on domain %s after challenge: %v", clientIP, domainName, err)
-	} else if debug { // Log success only in debug
-		log.Printf("Successfully removed %s from internal blocklist (domain: %s).", clientIP, domainName)
+		if err := clientUnblockIP(clientIP); err != nil {
+			log.Printf("Error updating internal blocklist for %s on domain %s after challenge: %v", clientIP, domainName, err)
+		} else if debug {
+			log.Printf("Successfully removed %s from internal blocklist (domain: %s).", clientIP, domainName)
+		}
 	}
 
-	// Add IP to temporary whitelist
 	addTempWhitelist(clientIP)
 
 	// Display success message with cache-control headers

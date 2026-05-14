@@ -116,6 +116,13 @@ func handleLogFile(filePath string) {
 		return
 	}
 
+	if isIgnoredFile(filePath) {
+		if debug {
+			log.Printf("Ignoring log file: %s", filePath)
+		}
+		return
+	}
+
 	// Get file info to check if it's a regular file
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
@@ -543,9 +550,7 @@ func startPeriodicTasks(watcher *fsnotify.Watcher) {
 	// startTempWhitelistCleanupTask logs its own start message
 	startTempWhitelistCleanupTask()
 
-	// Start the challenge logged IPs cleanup task separately
-	// startChallengeLoggedIPsCleanupTask logs its own start message
-	startChallengeLoggedIPsCleanupTask()
+	// Note: startChallengeLoggedIPsCleanupTask is already called from startChallengeServer()
 
 	// Keep this log as it confirms periodic tasks are running
 	log.Println("Started periodic background tasks (log check, cleanup).")

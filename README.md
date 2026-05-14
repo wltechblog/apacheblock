@@ -1,6 +1,6 @@
 # Apache Block
 
-Apache Block is a security tool for web servers that monitors log files for suspicious activity and automatically blocks malicious IP addresses using iptables.
+Apache Block is a security tool for web servers that monitors log files for suspicious activity and automatically blocks malicious IP addresses using iptables or nftables.
 
 ## Features
 
@@ -10,14 +10,20 @@ Apache Block is a security tool for web servers that monitors log files for susp
 - Maintains a whitelist of IP addresses, subnets, and domains that should never be blocked
 - Persists blocklist between restarts
 - Provides client mode for manual management of blocked IPs and subnets
-- Uses a dedicated iptables chain for better organization of firewall rules
-- **(New)** Optional reCAPTCHA challenge for blocked IPs instead of immediate drop
+- Uses a dedicated iptables/nftables chain for better organization of firewall rules
+- Supports both iptables and nftables firewall backends
+- Optional reCAPTCHA challenge for blocked IPs instead of immediate drop
+- Syslog integration for centralized logging
+- Ignored log files list to exclude specific files from monitoring
+- Graceful shutdown on SIGTERM/SIGINT
+- IPv4 and IPv6 support
+- API key authentication via environment variable
 
 ## Requirements
 
-- Linux system with iptables
+- Linux system with iptables or nftables
 - Go 1.16 or higher (for building from source)
-- Root privileges (for iptables operations)
+- Root privileges (for firewall operations)
 
 ## Installation
 
@@ -27,7 +33,7 @@ You can install Apache Block directly using Go:
 # Install the latest version
 go install github.com/wltechblog/apacheblock@latest
 
-# Create the whitelist directory
+# Create the configuration directory
 sudo mkdir -p /etc/apacheblock
 
 # Copy the binary to a system location (if not already in your PATH)
@@ -68,6 +74,9 @@ sudo apacheblock -domainWhitelist /path/to/domainwhitelist.txt
 # Enable debug mode for verbose logging
 sudo apacheblock -debug
 
+# Log to syslog instead of stdout
+sudo apacheblock -logOutput syslog
+
 # Remove all existing port blocking rules
 sudo apacheblock -clean
 ```
@@ -90,8 +99,11 @@ sudo apacheblock -disableSubnetBlocking
 # Process more log lines at startup (10000 lines)
 sudo apacheblock -startupLines 10000
 
+# Use nftables instead of iptables
+sudo apacheblock -firewallType nftables
+
 # Combine multiple options
-sudo apacheblock -server apache -logPath /var/log/apache2 -threshold 5 -expirationPeriod 10m -debug
+sudo apacheblock -server apache -logPath /var/log/apache2 -threshold 5 -expirationPeriod 10m -logOutput syslog
 ```
 
 ### Client Mode
@@ -155,7 +167,11 @@ You can secure the socket interface with an API key to prevent unauthorized acce
 To set an API key when starting the server:
 
 ```bash
+# Via command-line flag
 sudo apacheblock -apiKey "your-secret-key"
+
+# Or via environment variable (avoids exposing the key in process listings)
+sudo APACHEBLOCK_API_KEY="your-secret-key" apacheblock
 ```
 
 Then, when using client commands, you must include the same API key:
@@ -268,7 +284,7 @@ If the web interface shows "Service Not Running" even though the service is runn
 
 3. Common issues:
    - Socket path mismatch: Make sure the `socketPath` in config.php matches the path used by the service
-   - Permissions: The socket file should have permissions 0666 to allow the web server to access it
+   - Permissions: The socket file has restricted permissions (0600); the web server user may need to be in the same group or run as root
    - API key mismatch: The API key in config.php must match the one used by the service
    - SELinux: On systems with SELinux, you may need to set appropriate contexts for the socket file
 
@@ -306,16 +322,23 @@ whitelist = /etc/apacheblock/whitelist.txt
 # Path to domain whitelist file
 domainWhitelist = /etc/apacheblock/domainwhitelist.txt
 
+# Path to file listing log files to ignore (one basename or full path per line)
+ignoreFiles = /etc/apacheblock/ignorefiles.txt
+
 # Path to blocklist file
 blocklist = /etc/apacheblock/blocklist.json
 
 # Path to rules file
 rules = /etc/apacheblock/rules.json
 
-# Name of the iptables chain to use
-table = apacheblock
+# Firewall type: iptables or nftables
+firewallType = iptables
+
+# Name of the firewall chain to use for blocking rules
+firewallChain = apacheblock
 
 # API key for socket authentication (leave empty for no authentication)
+# Alternatively, use the APACHEBLOCK_API_KEY environment variable
 apiKey =
 
 # Path to the Unix domain socket for client-server communication
@@ -323,6 +346,9 @@ socketPath = /var/run/apacheblock.sock
 
 # Enable debug mode (true/false)
 debug = false
+
+# Logging output: stdout or syslog
+logOutput = stdout
 
 # Enable verbose debug mode (true/false)
 verbose = false
@@ -336,6 +362,9 @@ threshold = 3
 # Number of IPs from a subnet to trigger subnet blocking
 subnetThreshold = 3
 
+# Disable automatic subnet blocking (true/false)
+disableSubnetBlocking = false
+
 # Number of log lines to process at startup
 startupLines = 5000
 
@@ -347,6 +376,9 @@ challengeEnable = false
 
 # Port for the internal HTTPS challenge server to listen on
 challengePort = 4443
+
+# Port for the internal HTTP redirect server (redirects to HTTPS challenge)
+challengeHTTPPort = 8088
 
 # Path to the directory containing SSL certificates ([domain].key, [domain].crt)
 # ApacheBlock will load certificates dynamically based on the requested domain (SNI).
@@ -362,34 +394,46 @@ recaptchaSecretKey = YOUR_RECAPTCHA_SECRET_KEY
 
 # Duration for which an IP remains whitelisted after solving a challenge (e.g., 5m, 1h)
 challengeTempWhitelistDuration = 5m
+
+# Comma-separated list of trusted reverse proxy IPs
+# Only trust X-Forwarded-For/X-Real-IP headers from these addresses
+trustedProxies =
 ```
 
 ## reCAPTCHA Challenge Feature (Optional)
 
-Instead of immediately blocking traffic from a suspicious IP using `iptables DROP`, Apache Block can be configured to redirect the user to an internal HTTPS server that presents a Google reCAPTCHA v2 challenge.
+Instead of immediately blocking traffic from a suspicious IP using `DROP`, Apache Block can be configured to redirect the user to an internal HTTPS server that presents a Google reCAPTCHA v2 challenge. This works with both iptables and nftables.
 
 **How it works:**
 
 1.  **Enable:** Set `challengeEnable = true` in the configuration file.
 2.  **Configure:** Provide your Google reCAPTCHA v2 Site Key (`recaptchaSiteKey`) and Secret Key (`recaptchaSecretKey`), the port for the internal server (`challengePort`), and the path to your SSL certificates (`challengeCertPath`).
-3.  **Redirection:** When an IP is flagged, Apache Block adds `iptables` rules to redirect HTTP and HTTPS traffic from that IP to the `challengePort`. (Currently requires `firewallType = iptables`).
+3.  **Redirection:** When an IP is flagged, Apache Block adds firewall rules to redirect HTTP and HTTPS traffic from that IP to the `challengePort`.
 4.  **Challenge Server:** Apache Block runs an internal HTTPS server on `challengePort`.
     *   It uses SNI to identify the requested domain.
-    *   It attempts to load the corresponding certificate (`domain.crt`, `domain.key`) from `challengeCertPath`. It automatically handles `www.` prefixes (e.g., `example.com.crt` works for `www.example.com`).
+    *   It attempts to load the corresponding certificate (`domain_fullchain.pem`, `domain.key`) from `challengeCertPath`. It automatically handles `www.` prefixes (e.g., `example.com_fullchain.pem` works for `www.example.com`).
     *   If a specific certificate isn't found, it falls back to a self-signed certificate generated in memory at startup (this will cause browser warnings but allows the challenge to be presented).
     *   It serves an HTML page containing the reCAPTCHA widget.
 5.  **Verification:** When the user submits the reCAPTCHA, the server verifies the response with Google using your secret key.
 6.  **Unblocking:** Upon successful verification:
-    *   The `iptables` redirect rules for the user's IP are removed.
+    *   If the IP was blocked individually, the redirect rules for that IP are removed.
+    *   If the IP was blocked as part of a subnet, the subnet rule is removed and replaced with individual rules for all other IPs in that subnet (the verified IP is freed).
     *   The user's IP is added to a temporary whitelist for the duration specified by `challengeTempWhitelistDuration` (default 5 minutes) to prevent immediate re-blocking.
     *   A success page is displayed.
+
+**Trusted Proxies:**
+
+By default, the challenge server does not trust `X-Forwarded-For` or `X-Real-IP` headers, preventing header spoofing attacks. If your server is behind a reverse proxy (e.g., Cloudflare, nginx), configure `trustedProxies` with the proxy's IP address(es) so that client IPs are correctly identified:
+
+```
+trustedProxies = 10.0.0.1,10.0.0.2
+```
 
 **Requirements for Challenge Feature:**
 
 *   `challengeEnable = true` in configuration.
 *   Valid Google reCAPTCHA v2 Site and Secret keys.
-*   A directory (`challengeCertPath`) containing valid SSL certificates (`.crt`, `.key`) named after the domains being protected (e.g., `example.com.crt`, `example.com.key`).
-*   `firewallType = iptables` (nftables redirect support not yet implemented).
+*   A directory (`challengeCertPath`) containing valid SSL certificates named after the domains being protected.
 *   The `challengePort` must be accessible to the users being redirected.
 
 ## Command-line Options
@@ -404,11 +448,13 @@ Instead of immediately blocking traffic from a suspicious IP using `iptables DRO
 | `-whitelist` | `/etc/apacheblock/whitelist.txt` | Path to whitelist file |
 | `-domainWhitelist` | `/etc/apacheblock/domainwhitelist.txt` | Path to domain whitelist file |
 | `-blocklist` | `/etc/apacheblock/blocklist.json` | Path to blocklist file |
+| `-ignoreFiles` | `/etc/apacheblock/ignorefiles.txt` | Path to ignored log files list |
 | `-rules` | `/etc/apacheblock/rules.json` | Path to rules file |
 | `-table` | `apacheblock` | Name of the firewall chain to use (iptables/nftables) |
-| `-firewallType` | `iptables` | Firewall type to use (`iptables` or `nftables`) - Redirects currently require iptables |
-| `-apiKey` | `""` | API key for socket authentication |
+| `-firewallType` | `iptables` | Firewall type to use (`iptables` or `nftables`) |
+| `-apiKey` | `""` | API key for socket authentication (or use `APACHEBLOCK_API_KEY` env var) |
 | `-socketPath` | `/var/run/apacheblock.sock` | Path to the Unix domain socket for client-server communication |
+| `-logOutput` | `stdout` | Logging output: `stdout` or `syslog` |
 | `-debug` | `false` | Enable debug mode for basic logging |
 | `-verbose` | `false` | Enable verbose debug mode (logs all processed lines and rule matching) |
 | `-clean` | `false` | Remove all existing port blocking rules |
@@ -431,12 +477,23 @@ Instead of immediately blocking traffic from a suspicious IP using `iptables DRO
 | `-threshold` | `3` | Number of suspicious requests to trigger IP blocking |
 | `-subnetThreshold` | `3` | Number of IPs from a subnet to trigger subnet blocking |
 | `-startupLines` | `5000` | Number of log lines to process at startup |
-| `-challengeEnable` | `false` | Enable the reCAPTCHA challenge feature |
-| `-challengePort` | `4443` | Port for the internal HTTPS challenge server |
-| `-challengeCertPath` | `/etc/apacheblock/certs` | Path to directory containing SSL certificates for challenge server |
-| `-recaptchaSiteKey` | `""` | Google reCAPTCHA v2 Site Key |
-| `-recaptchaSecretKey` | `""` | Google reCAPTCHA v2 Secret Key |
-| `-challengeTempWhitelistDuration` | `5m` | Duration for temporary whitelist after successful challenge |
+
+## Ignored Log Files
+
+Apache Block can skip specific log files that you don't want monitored. The ignored files list supports both basenames and full paths.
+
+Example `/etc/apacheblock/ignorefiles.txt`:
+```
+# Ignore by basename (matches any file with this name in any subdirectory)
+error.log
+
+# Ignore by full path
+/var/customers/logs/example.com/access.log
+```
+
+Entries without a leading `/` are matched by basename against any log file discovered in the log directory or its subdirectories. Full paths must match exactly.
+
+If the file doesn't exist, an example file is created automatically at startup.
 
 ## Rules Configuration
 
@@ -506,13 +563,12 @@ The domain whitelist file contains domain names that should never be blocked. Wh
 Example domain whitelist file:
 ```
 # Individual domain names
-example.com
-google.com
-cloudflare.com
+# example.com
+# google.com
 
 # Subdomains
-api.example.com
-cdn.example.com
+# api.example.com
+# cdn.example.com
 ```
 
 The domain whitelist feature works as follows:
@@ -547,15 +603,17 @@ When the program starts, it loads the blocklist from this file and applies the r
 ## How It Works
 
 1. **Initialization**:
-   - Creates a custom iptables chain for managing blocks
+   - Creates a custom iptables or nftables chain for managing blocks
    - Loads IP whitelist entries from the specified file
    - Loads domain whitelist entries from the specified file
+   - Loads the ignored log files list
    - Automatically adds local IP addresses to the whitelist
    - Loads the blocklist from a JSON file and applies it to the firewall
    - Starts a socket server for client communication
 
 2. **Log Monitoring**:
    - Monitors log files in the specified directory and its subdirectories
+   - Skips files listed in the ignored files list
    - Detects new log files and log rotation events
    - Processes log entries to identify suspicious activity
 
@@ -566,10 +624,36 @@ When the program starts, it loads the blocklist from this file and applies the r
    - Default rules detect PHP file access attempts, WordPress login attempts, and SQL injection attempts
 
 4. **Blocking Mechanism**:
-   - When an IP exceeds the threshold of suspicious requests, it's blocked using iptables
+   - When an IP exceeds the threshold of suspicious requests, it's blocked using iptables or nftables
    - When multiple IPs from the same subnet are blocked, the entire subnet is blocked
    - Blocks apply to both HTTP (port 80) and HTTPS (port 443) traffic
    - All blocks are saved to a JSON file for persistence between restarts
+   - When an IP within a blocked subnet passes the reCAPTCHA challenge, the subnet rule is split back into individual IP rules (minus the verified IP)
+
+5. **Graceful Shutdown**:
+   - On SIGTERM or SIGINT, the blocklist is saved to disk before exiting
+
+## Logging
+
+Apache Block supports two logging outputs:
+
+- **stdout** (default): Logs to standard error, suitable for systemd journal capture or pipe redirection.
+- **syslog**: Logs to the system syslog daemon as facility `DAEMON` with priority `NOTICE`, using the tag `apacheblock`.
+
+Set via configuration file:
+```
+logOutput = syslog
+```
+
+Or via command line:
+```bash
+sudo apacheblock -logOutput syslog
+```
+
+Block events include the triggering log line for audit purposes:
+```
+BLOCKED IP 1.2.3.4 from /var/log/access.log for Apache PHP 403/404 404 (User-Agent: curl/7.88) Request: 1.2.3.4 - - [13/May/2026:10:00:01 +0000] "GET /wp-login.php HTTP/1.1" 404 453
+```
 
 ## Running as a Service
 
@@ -609,7 +693,8 @@ Description=Apache Block - Web Server Security Tool
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/apacheblock -server apache -logPath /var/log/apache2 -whitelist /etc/apacheblock/whitelist.txt -domainWhitelist /etc/apacheblock/domainwhitelist.txt -blocklist /etc/apacheblock/blocklist.json -table apacheblock -threshold 5 -expirationPeriod 10m
+Environment=APACHEBLOCK_API_KEY=your-secret-key
+ExecStart=/usr/local/bin/apacheblock -logOutput syslog
 Restart=always
 RestartSec=10
 User=root
@@ -618,10 +703,6 @@ Group=root
 [Install]
 WantedBy=multi-user.target
 ```
-
-## Logging
-
-Apache Block logs its activity to the standard output, which can be redirected to a file or captured by systemd when running as a service.
 
 ## License
 

@@ -18,98 +18,6 @@ const (
 	DebugCommand   ClientCommand = "debug"
 )
 
-// RunClientMode executes the client mode operation
-func RunClientMode(command ClientCommand, target string) error {
-	// Validate the command
-	switch command {
-	case BlockCommand, UnblockCommand, CheckCommand:
-		// These commands require a target
-		if target == "" {
-			return fmt.Errorf("target IP or subnet is required for %s command", command)
-		}
-
-		// Validate the target as an IP or CIDR
-		if !isValidIPOrCIDR(target) {
-			return fmt.Errorf("invalid IP address or CIDR range: %s", target)
-		}
-	case ListCommand, DebugCommand:
-		// List and Debug commands don't require a target
-	default:
-		return fmt.Errorf("unknown command: %s", command)
-	}
-
-	// Try to send the command to a running server first
-	err := sendCommand(command, target)
-	if err == nil {
-		// Command was successfully sent to the server
-		return nil
-	}
-
-	// If we couldn't connect to the server, fall back to direct execution
-	log.Printf("Could not connect to server: %v", err)
-	log.Printf("Executing command directly (changes will not affect a running server)")
-
-	// Load the blocklist for all commands
-	if err := loadBlockList(); err != nil {
-		log.Printf("Warning: Failed to load blocklist: %v", err)
-	}
-
-	// Execute the command directly
-	switch command {
-	case BlockCommand:
-		// Check if already blocked before setting up firewall
-		isBlocked, subnet, err := isIPBlocked(target)
-		if err != nil {
-			return err
-		}
-		if isBlocked {
-			if subnet != "" {
-				fmt.Printf("%s is already blocked (contained in subnet %s)\n", target, subnet)
-			} else {
-				fmt.Printf("%s is already blocked\n", target)
-			}
-			return nil
-		}
-
-		// Now initialize firewall manager and block
-		if err := InitFirewallManager(); err != nil { // Use Init instead of setup
-			return fmt.Errorf("failed to initialize firewall manager: %v", err)
-		}
-		return clientBlockIP(target) // clientBlockIP now uses fwManager
-
-	case UnblockCommand:
-		// Check if already unblocked before setting up firewall
-		isBlocked, _, err := isIPBlocked(target)
-		if err != nil {
-			return err
-		}
-		if !isBlocked {
-			fmt.Printf("%s is not blocked\n", target)
-			return nil
-		}
-
-		// Now initialize firewall manager and unblock
-		if err := InitFirewallManager(); err != nil { // Use Init instead of setup
-			return fmt.Errorf("failed to initialize firewall manager: %v", err)
-		}
-		return clientUnblockIP(target) // clientUnblockIP now uses fwManager
-
-	case CheckCommand:
-		// No need to set up firewall for check
-		return clientCheckIP(target)
-
-	case ListCommand:
-		// No need to set up firewall for list
-		return clientListBlocked()
-
-	case DebugCommand:
-		// Debug command is only available via socket
-		return fmt.Errorf("debug command is only available when connected to a running server")
-	}
-
-	return nil
-}
-
 // clientBlockIP manually blocks an IP or subnet
 func clientBlockIP(target string) error {
 	// Check if it's already blocked
@@ -191,7 +99,7 @@ func clientUnblockIP(target string) error {
 	mu.Lock()
 	if strings.Contains(target, "/") {
 		delete(blockedSubnets, target)
-		// For subnets, we need to remove all IPs in that subnet from ipAccessLog
+		delete(subnetBlockedIPs, target)
 		_, subnet, err := net.ParseCIDR(target)
 		if err == nil {
 			for ip := range ipAccessLog {

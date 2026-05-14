@@ -13,8 +13,12 @@ func getSubnet(ip string) string {
 	if ipAddr == nil {
 		return ""
 	}
-	mask := net.CIDRMask(24, 32)
-	return ipAddr.Mask(mask).String() + "/24"
+	if ipAddr.To4() != nil {
+		mask := net.CIDRMask(24, 32)
+		return ipAddr.Mask(mask).String() + "/24"
+	}
+	mask := net.CIDRMask(64, 128)
+	return ipAddr.Mask(mask).String() + "/64"
 }
 
 // skipToLastLines skips to the last n lines of a file

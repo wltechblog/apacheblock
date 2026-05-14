@@ -1,0 +1,58 @@
+{
+  "rules": [
+    {
+      "name": "Apache PHP 403/404",
+      "description": "Detects requests to PHP files resulting in 403 or 404 status codes in Apache logs",
+      "logFormat": "apache",
+      "regex": "^([\\d\\.]+) .* \"(?:GET|POST|HEAD) /[^?\\s]*\\.php(?:\\?[^\\s]*)?(?:\\s+HTTP/[\\d\\.]+)\" (403|404) .*",
+      "threshold": 3,
+      "duration": "5m",
+      "enabled": true
+    },
+    {
+      "name": "Caddy PHP Redirects",
+      "description": "Detects requests to PHP files resulting in 301 redirects in Caddy logs",
+      "logFormat": "caddy",
+      "regex": ".*\\.php(?:\\?|/|$).*",
+      "threshold": 3,
+      "duration": "5m",
+      "enabled": true
+    },
+    {
+      "name": "WordPress Login Attempts",
+      "description": "Detects repeated failed login attempts to WordPress admin",
+      "logFormat": "apache",
+      "regex": "^([\\d\\.]+) .* \"POST .*wp-login\\.php.*\" (200|403) .*",
+      "threshold": 5,
+      "duration": "10m",
+      "enabled": true
+    },
+    {
+      "name": "WordPress Registration Attempts",
+      "description": "Detects multiple WordPress account registration attempts from the same IP",
+      "logFormat": "apache",
+      "regex": "^([\\d\\.]+) .* \"POST .*wp-login\\.php\\?action=register.*\" (200|302) .*",
+      "threshold": 3,
+      "duration": "15m",
+      "enabled": true
+    },
+    {
+      "name": "SQL Injection Attempts",
+      "description": "Detects basic SQL injection attempts in URLs",
+      "logFormat": "all",
+      "regex": "^([\\d\\.]+) .* \"GET .*(?:union\\s+select|select\\s*\\*|drop\\s+table|--\\s|;\\s*--\\s|'|%27).*\" .*",
+      "threshold": 2,
+      "duration": "5m",
+      "enabled": true
+    },
+    {
+      "name": "WordPress File Probing",
+      "description": "Detects attempts to access common WordPress files that don't exist",
+      "logFormat": "apache",
+      "regex": "^([\\d\\.]+) .* \"GET .*(?:wp-includes|wp-content|wp-admin).*\" (403|404) .*",
+      "threshold": 3,
+      "duration": "5m",
+      "enabled": true
+    }
+  ]
+}

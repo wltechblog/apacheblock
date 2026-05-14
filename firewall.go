@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
+	"net"
 	"os/exec"
+	"regexp"
 	"strings"
-	"sync" // Added for manager instance
+	"sync"
 )
 
 // --- Firewall Manager Interface ---
@@ -197,16 +200,15 @@ func (m *IPTablesManager) Flush() error {
 
 // IsRulePresent checks if a specific iptables rule exists.
 func (m *IPTablesManager) IsRulePresent(checkArgs []string) (bool, error) {
-	fullArgs := append([]string{"-w"}, checkArgs...) // Add wait flag
+	fullArgs := append([]string{"-w"}, checkArgs...)
 	cmd := exec.Command("iptables", fullArgs...)
-	err := cmd.Run()
+	output, err := cmd.CombinedOutput()
 	if err == nil {
 		return true, nil
 	}
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 		return false, nil
 	}
-	output, _ := cmd.CombinedOutput()
 	return false, fmt.Errorf("error checking iptables rule %v: %v, output: %s", checkArgs, err, string(output))
 }
 
@@ -467,9 +469,24 @@ func (m *NFTablesManager) Flush() error {
 
 // IsRulePresent is complex in nftables as it requires listing and parsing. Placeholder.
 func (m *NFTablesManager) IsRulePresent(checkArgs []string) (bool, error) {
-	log.Println("NFTables IsRulePresent is not yet implemented.")
-	// TODO: Implement rule checking for nftables.
-	return false, fmt.Errorf("nftables IsRulePresent not implemented")
+	// checkArgs are iptables-style args; for nftables we do a best-effort check
+	// by listing rules in our chains and searching for the target IP/subnet
+	var target string
+	for i, arg := range checkArgs {
+		if arg == "-s" && i+1 < len(checkArgs) {
+			target = checkArgs[i+1]
+			break
+		}
+	}
+	if target == "" {
+		return false, nil
+	}
+
+	output, err := m.runNFTCommand("list", "ruleset")
+	if err != nil {
+		return false, nil
+	}
+	return strings.Contains(string(output), target), nil
 }
 
 // AddBlockRule adds a drop rule to the filter chain.
@@ -492,10 +509,7 @@ func (m *NFTablesManager) AddBlockRule(target string) error {
 
 // RemoveBlockRule removes a drop rule. Requires knowing the rule handle or exact spec. Placeholder.
 func (m *NFTablesManager) RemoveBlockRule(target string) error {
-	log.Printf("NFTables RemoveBlockRule for %s is not yet implemented.", target)
-	// TODO: Implement nft rule removal. Requires listing rules to find handle or deleting by exact spec.
-	// Example (spec): nft delete rule inet apacheblock apacheblock_filter ip saddr <target> tcp dport {80, 443} drop
-	return fmt.Errorf("nftables RemoveBlockRule not implemented")
+	return m.deleteRulesByTarget(m.tableName, m.filterChain, target)
 }
 
 // AddRedirectRule adds redirect rules to the nat chain.
@@ -540,9 +554,12 @@ func (m *NFTablesManager) AddRedirectRule(target string) error {
 
 // RemoveRedirectRule removes redirect rules. Requires knowing the rule handle or exact spec. Placeholder.
 func (m *NFTablesManager) RemoveRedirectRule(target string) error {
-	log.Printf("NFTables RemoveRedirectRule for %s is not yet implemented.", target)
-	// TODO: Implement nft rule removal for redirecting. Requires listing rules to find handle or deleting by exact spec.
-	return fmt.Errorf("nftables RemoveRedirectRule not implemented")
+	_, tableNameOnly := m.parseTableName()
+	if tableNameOnly == "" {
+		return fmt.Errorf("invalid nftables table name format: %s", m.tableName)
+	}
+	natTableName := "ip " + tableNameOnly
+	return m.deleteRulesByTarget(natTableName, m.natChain, target)
 }
 
 // parseTableName splits "family name" into parts.
@@ -552,6 +569,46 @@ func (m *NFTablesManager) parseTableName() (string, string) {
 		return parts[0], parts[1]
 	}
 	return "", "" // Invalid format
+}
+
+var nftHandleRe = regexp.MustCompile(`# handle (\d+)`)
+
+func (m *NFTablesManager) deleteRulesByTarget(tableName, chainName, target string) error {
+	output, err := m.runNFTCommand("-a", "list", "chain", tableName, chainName)
+	if err != nil {
+		return fmt.Errorf("failed to list chain %s %s: %w", tableName, chainName, err)
+	}
+
+	var handles []string
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, target) {
+			matches := nftHandleRe.FindStringSubmatch(line)
+			if len(matches) == 2 {
+				handles = append(handles, matches[1])
+			}
+		}
+	}
+
+	if len(handles) == 0 {
+		if debug {
+			log.Printf("No nft rules found for target %s in %s %s", target, tableName, chainName)
+		}
+		return nil
+	}
+
+	for _, handle := range handles {
+		_, err := m.runNFTCommand("delete", "rule", tableName, chainName, "handle", handle)
+		if err != nil {
+			log.Printf("Warning: failed to delete nft rule handle %s: %v", handle, err)
+		} else if debug {
+			log.Printf("Deleted nft rule handle %s for target %s", handle, target)
+		}
+	}
+
+	log.Printf("Removed %d nft rule(s) for %s in %s %s", len(handles), target, tableName, chainName)
+	return nil
 }
 
 // --- Helper functions previously global, now potentially methods or standalone ---
@@ -596,7 +653,7 @@ func removePortBlockingRules() error {
 }
 
 // blockIP adds an IP to the blocklist and blocks it in the firewall
-func blockIP(ip, filePath string, rule string, userAgent ...string) {
+func blockIP(ip, filePath string, rule string, triggeringRequest string, userAgent ...string) {
 	if fwManager == nil {
 		log.Println("Error: Firewall manager not initialized in blockIP")
 		return
@@ -643,9 +700,9 @@ func blockIP(ip, filePath string, rule string, userAgent ...string) {
 
 	// Log with User-Agent if provided
 	if len(userAgent) > 0 && userAgent[0] != "" {
-		log.Printf("Blocked IP %s from file %s for %s (User-Agent: %s)", ip, filePath, rule, userAgent[0])
+		log.Printf("BLOCKED IP %s from %s for %s (User-Agent: %s) Request: %s", ip, filePath, rule, userAgent[0], triggeringRequest)
 	} else {
-		log.Printf("Blocked IP %s from file %s for %s", ip, filePath, rule)
+		log.Printf("BLOCKED IP %s from %s for %s Request: %s", ip, filePath, rule, triggeringRequest)
 	}
 }
 
@@ -665,9 +722,12 @@ func blockSubnet(subnet string) {
 
 	ipsToRemove := make([]string, 0)
 	if !alreadyBlocked {
-		for ip := range blockedIPs {
-			if strings.HasPrefix(ip, strings.TrimSuffix(subnet, ".0/24")) {
-				ipsToRemove = append(ipsToRemove, ip)
+		_, ipNet, err := net.ParseCIDR(subnet)
+		if err == nil {
+			for ip := range blockedIPs {
+				if parsedIP := net.ParseIP(ip); parsedIP != nil && ipNet.Contains(parsedIP) {
+					ipsToRemove = append(ipsToRemove, ip)
+				}
 			}
 		}
 	}
@@ -776,5 +836,79 @@ func applyBlockList() error {
 	log.Printf("Applied %s to firewall: %d IPs, %d subnets",
 		action, len(ipsToApply), len(subnetsToApply))
 
+	return nil
+}
+
+// findContainingSubnet returns the blocked subnet that contains the given IP, or "" if none.
+func findContainingSubnet(ip string) string {
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return ""
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for subnet := range blockedSubnets {
+		_, ipNet, err := net.ParseCIDR(subnet)
+		if err != nil {
+			continue
+		}
+		if ipNet.Contains(parsedIP) {
+			return subnet
+		}
+	}
+	return ""
+}
+
+// unblockIPFromSubnet removes the subnet-level firewall rule, re-adds individual
+// rules for all OTHER IPs that were tracked in that subnet, and removes the subnet
+// from the blocklist. The verified IP itself is NOT re-added.
+func unblockIPFromSubnet(ip, subnet string) error {
+	// Collect the other IPs in this subnet while holding the lock
+	mu.Lock()
+	otherIPs := make([]string, 0)
+	if ips, ok := subnetBlockedIPs[subnet]; ok {
+		for otherIP := range ips {
+			if otherIP != ip {
+				otherIPs = append(otherIPs, otherIP)
+			}
+		}
+	}
+	delete(subnetBlockedIPs, subnet)
+	delete(blockedSubnets, subnet)
+	mu.Unlock()
+
+	// Remove the subnet-level firewall rule
+	var removeErr error
+	if challengeEnable {
+		removeErr = fwManager.RemoveRedirectRule(subnet)
+	} else {
+		removeErr = fwManager.RemoveBlockRule(subnet)
+	}
+	if removeErr != nil {
+		log.Printf("Warning: failed to remove subnet firewall rule for %s: %v", subnet, removeErr)
+	}
+
+	// Re-add individual rules for the remaining IPs in the subnet
+	for _, otherIP := range otherIPs {
+		mu.Lock()
+		blockedIPs[otherIP] = struct{}{}
+		mu.Unlock()
+
+		var addErr error
+		if challengeEnable {
+			addErr = fwManager.AddRedirectRule(otherIP)
+		} else {
+			addErr = fwManager.AddBlockRule(otherIP)
+		}
+		if addErr != nil {
+			log.Printf("Warning: failed to re-add individual rule for IP %s after splitting subnet %s: %v", otherIP, subnet, addErr)
+		}
+	}
+
+	log.Printf("Split subnet %s: unblocked IP %s, re-added %d individual IP rules", subnet, ip, len(otherIPs))
+
+	if err := saveBlockList(); err != nil {
+		log.Printf("Warning: failed to save blocklist after splitting subnet %s: %v", subnet, err)
+	}
 	return nil
 }

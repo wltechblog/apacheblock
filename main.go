@@ -5,6 +5,8 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -19,6 +21,7 @@ func main() {
 	whitelistPath := flag.String("whitelist", whitelistFilePath, "Path to whitelist file")
 	domainWhitelistPathFlag := flag.String("domainWhitelist", domainWhitelistPath, "Path to domain whitelist file")
 	blocklistPath := flag.String("blocklist", blocklistFilePath, "Path to blocklist file")
+	ignoreFilesPathFlag := flag.String("ignoreFiles", ignoreFilesPath, "Path to ignored log files list")
 	rulesPath := flag.String("rules", rulesFilePath, "Path to rules file")
 	tableName := flag.String("table", firewallChain, "Name of the iptables chain to use") // Renamed variable
 
@@ -26,7 +29,7 @@ func main() {
 	expPeriod := flag.Duration("expirationPeriod", 5*time.Minute, "Time period to monitor for malicious activity")
 	thresholdFlag := flag.Int("threshold", 3, "Number of suspicious requests to trigger IP blocking")
 	subnetThresholdFlag := flag.Int("subnetThreshold", 3, "Number of IPs from a subnet to trigger subnet blocking")
-	disableSubnetBlockingFlag := flag.Bool("disableSubnetBlocking", false, "Disable automatic subnet blocking")
+	_ = flag.Bool("disableSubnetBlocking", false, "Disable automatic subnet blocking")
 	startupLinesFlag := flag.Int("startupLines", 5000, "Number of log lines to process at startup")
 
 	// Client mode options
@@ -41,6 +44,8 @@ func main() {
 
 	// Socket path for client-server communication
 	socketPathFlag := flag.String("socketPath", SocketPath, "Path to the Unix domain socket for client-server communication")
+
+	logOutputFlag := flag.String("logOutput", "stdout", "Logging output: stdout or syslog")
 
 	flag.Parse()
 
@@ -66,21 +71,25 @@ func main() {
 	}
 
 	// Command line flags override configuration file settings
+	// Only apply CLI flag values when the user explicitly set them
+	flagSet := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) {
+		flagSet[f.Name] = true
+	})
 
-	// Set configuration variables from flags
-	if *expPeriod != 5*time.Minute { // Check if user specified a non-default value
+	if flagSet["expirationPeriod"] {
 		expirationPeriod = *expPeriod
 	}
-	if *thresholdFlag != 3 { // Check if user specified a non-default value
+	if flagSet["threshold"] {
 		threshold = *thresholdFlag
 	}
-	if *subnetThresholdFlag != 3 { // Check if user specified a non-default value
+	if flagSet["subnetThreshold"] {
 		subnetThreshold = *subnetThresholdFlag
 	}
-	if *disableSubnetBlockingFlag { // Check if user specified to disable subnet blocking
+	if flagSet["disableSubnetBlocking"] {
 		disableSubnetBlocking = true
 	}
-	if *startupLinesFlag != 5000 { // Check if user specified a non-default value
+	if flagSet["startupLines"] {
 		startupLines = *startupLinesFlag
 	}
 
@@ -93,68 +102,79 @@ func main() {
 	}
 
 	// Set the file paths and table name if specified on command line
-	// These logs are useful only when debugging overrides
-	if *whitelistPath != whitelistFilePath {
+	if flagSet["whitelist"] {
 		whitelistFilePath = *whitelistPath
 		if debug {
 			log.Println("Setting whitelist path from command line:", whitelistFilePath)
 		}
 	}
 
-	if *domainWhitelistPathFlag != domainWhitelistPath {
+	if flagSet["domainWhitelist"] {
 		domainWhitelistPath = *domainWhitelistPathFlag
 		if debug {
 			log.Println("Setting domain whitelist path from command line:", domainWhitelistPath)
 		}
 	}
 
-	if *blocklistPath != blocklistFilePath {
+	if flagSet["blocklist"] {
 		blocklistFilePath = *blocklistPath
 		if debug {
 			log.Println("Setting blocklist path from command line:", blocklistFilePath)
 		}
 	}
 
-	if *rulesPath != rulesFilePath {
+	if flagSet["ignoreFiles"] {
+		ignoreFilesPath = *ignoreFilesPathFlag
+		if debug {
+			log.Println("Setting ignore files path from command line:", ignoreFilesPath)
+		}
+	}
+
+	if flagSet["rules"] {
 		rulesFilePath = *rulesPath
 		if debug {
 			log.Println("Setting rules path from command line:", rulesFilePath)
 		}
 	}
 
-	if *tableName != firewallChain {
+	if flagSet["table"] {
 		firewallChain = *tableName
 		if debug {
 			log.Println("Setting firewall chain from command line:", firewallChain)
 		}
 	}
 
-	// Set the API key if provided on command line
-	if *apiKeyFlag != "" {
+	// Set the API key if provided on command line or env var
+	if flagSet["apiKey"] && *apiKeyFlag != "" {
 		apiKey = *apiKeyFlag
-		// No logging for API key
+	} else if envKey := os.Getenv("APACHEBLOCK_API_KEY"); envKey != "" {
+		apiKey = envKey
 	}
 
 	// Set the socket path if provided on command line
-	if *socketPathFlag != SocketPath {
+	if flagSet["socketPath"] {
 		SocketPath = *socketPathFlag
 		if debug {
 			log.Println("Setting socket path from command line:", SocketPath)
 		}
 	}
 
-	// Set server and log path if specified on command line
-	if *server != "apache" || logFormat == "" { // Check if user specified a non-default value or if not set in config
-		if *server == "apache" || *server == "caddy" {
-			logFormat = *server
-			// if debug { log.Println("Setting server from command line:", logFormat) }
-		}
+	if flagSet["logOutput"] && (*logOutputFlag == "stdout" || *logOutputFlag == "syslog") {
+		logOutput = *logOutputFlag
 	}
 
-	if *logPath != "/var/customers/logs" || logpath == "" {
+	if err := setupLogging(); err != nil {
+		log.Fatalf("Error setting up logging: %v", err)
+	}
+
+	// Set server and log path if explicitly specified on command line
+	if flagSet["server"] && (*server == "apache" || *server == "caddy") {
+		logFormat = *server
+	}
+
+	if flagSet["logPath"] {
 		if _, err := os.Stat(*logPath); err == nil {
 			logpath = *logPath
-			// if debug { log.Println("Setting log path from command line:", logpath) }
 		}
 	}
 
@@ -299,16 +319,12 @@ func main() {
 		log.Printf("Warning: Failed to load rules: %v", err)
 	}
 
-	if *server == "apache" || *server == "caddy" {
-		logFormat = *server
-	} else {
-		log.Fatal("Invalid server")
+	if logFormat != "apache" && logFormat != "caddy" {
+		log.Fatal("Invalid server format: must be 'apache' or 'caddy'")
 	}
-	_, err := os.Stat(*logPath)
-	if err != nil {
-		log.Fatal("logpath invalid")
+	if _, err := os.Stat(logpath); err != nil {
+		log.Fatal("logpath invalid: ", logpath)
 	}
-	logpath = *logPath
 
 	if logFormat == "caddy" {
 		fileSuffix = ".log"
@@ -342,8 +358,17 @@ func main() {
 	// Read domain whitelist from file
 	if err := readDomainWhitelistFile(domainWhitelistPath); err != nil {
 		log.Printf("Warning: Failed to read domain whitelist file: %v", err)
-	} else if debug { // Only log success in debug mode
+	} else if debug {
 		log.Printf("Successfully loaded domain whitelist from %s", domainWhitelistPath)
+	}
+
+	// Read ignored files list
+	if err := readIgnoreFilesFile(ignoreFilesPath); err != nil {
+		log.Printf("Warning: Failed to read ignore files list: %v", err)
+	} else if _, err := os.Stat(ignoreFilesPath); os.IsNotExist(err) {
+		if err := createExampleIgnoreFilesFile(ignoreFilesPath); err != nil {
+			log.Printf("Warning: Failed to create example ignore files list: %v", err)
+		}
 	}
 
 	if *clean {
@@ -414,6 +439,14 @@ func main() {
 	// Process existing logs
 	processExistingLogs()
 
-	// Wait forever
-	select {}
+	// Wait for shutdown signal
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	<-sigChan
+
+	log.Println("Shutting down gracefully...")
+	if err := saveBlockList(); err != nil {
+		log.Printf("Warning: Failed to save blocklist during shutdown: %v", err)
+	}
+	log.Println("Shutdown complete.")
 }

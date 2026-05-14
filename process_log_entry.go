@@ -101,11 +101,12 @@ func processLogEntry(line, filePath string, state *FileState) {
 	}
 
 	// Log the rule match - Keep this log as it's important
-	log.Printf("Rule match: IP=%s, Reason=%s, File=%s", ip, reason, filePath)
+	log.Printf("Rule match: IP %s, Reason %s, File %s", ip, reason, filePath)
 
 	// Get the threshold and duration for this rule
 	ruleThreshold, ruleDuration := getRuleThreshold(reason)
 
+	var currentCount int
 	mu.Lock()
 	record, exists := ipAccessLog[ip]
 	now := time.Now()
@@ -118,32 +119,29 @@ func processLogEntry(line, filePath string, state *FileState) {
 		}
 		ipAccessLog[ip] = record
 	} else {
-		// If this is a hit for the same rule, update the count
 		if record.Reason == reason {
 			record.Count++
+			prevUpdated := record.LastUpdated
 			record.LastUpdated = now
-			// If it's been a while since the last update, extend the expiration
-			if now.Sub(record.LastUpdated) > time.Minute {
+			if now.Sub(prevUpdated) > time.Minute {
 				record.ExpiresAt = now.Add(ruleDuration)
 			}
 		} else {
-			// This is a hit for a different rule - increment the existing count
-			// All suspicious activity should count toward blocking, regardless of rule type
 			record.Count++
-			record.Reason = reason // Update to the latest rule that triggered
+			record.Reason = reason
 			record.LastUpdated = now
 			record.ExpiresAt = now.Add(ruleDuration)
 		}
 	}
+	currentCount = record.Count
 	mu.Unlock()
 
-	// Check if we should block this IP
-	if record.Count >= ruleThreshold {
+	if currentCount >= ruleThreshold {
 		// Extract User-Agent if possible
 		userAgent := extractUserAgent(line, logFormat)
 
 		// Block the IP - blockIP logs the action
-		blockIP(ip, filePath, reason, userAgent)
+		blockIP(ip, filePath, reason, line, userAgent)
 
 		// Check if we should block the subnet
 		if subnet != "" && !disableSubnetBlocking {
@@ -162,13 +160,12 @@ func processLogEntry(line, filePath string, state *FileState) {
 			}
 
 			if count >= subnetThreshold {
-				// blockSubnet logs the action
 				blockSubnet(subnet)
 			}
 		}
-	} else if debug { // Only log count if debug enabled
+	} else if debug {
 		log.Printf("IP %s has %d/%d suspicious requests (%s)",
-			ip, record.Count, ruleThreshold, record.Reason)
+			ip, currentCount, ruleThreshold, reason)
 	}
 
 	// Update the timestamp and IP in the file state

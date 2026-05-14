@@ -10,7 +10,6 @@ import (
 
 // saveBlockList saves the current list of blocked IPs and subnets to a file
 func saveBlockList() error {
-	// Ensure the directory exists
 	dir := filepath.Dir(blocklistFilePath)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -18,7 +17,6 @@ func saveBlockList() error {
 		}
 	}
 
-	// Create the blocklist
 	mu.Lock()
 	blocklist := BlockList{
 		IPs:     make([]string, 0, len(blockedIPs)),
@@ -32,20 +30,18 @@ func saveBlockList() error {
 	for subnet := range blockedSubnets {
 		blocklist.Subnets = append(blocklist.Subnets, subnet)
 	}
+
+	data, err := json.MarshalIndent(blocklist, "", "  ")
 	mu.Unlock()
 
-	// Marshal to JSON
-	data, err := json.MarshalIndent(blocklist, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal blocklist: %v", err)
 	}
 
-	// Write to file
 	if err := os.WriteFile(blocklistFilePath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write blocklist file: %v", err)
 	}
 
-	// Log save success only in debug
 	if debug {
 		log.Printf("Saved blocklist to %s: %d IPs, %d subnets",
 			blocklistFilePath, len(blocklist.IPs), len(blocklist.Subnets))

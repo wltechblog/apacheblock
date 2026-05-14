@@ -205,14 +205,14 @@ func readConfigFile(configPath string) error {
 				log.Printf("Warning: Invalid challengePort value: %s (must be between 1 and 65535)", value)
 			}
 		case "challengeCertPath":
-			// Basic check if it looks like a path, more robust check might be needed
-			if strings.Contains(value, "/") {
-				challengeCertPath = value
+			cleaned := filepath.Clean(value)
+			if filepath.IsAbs(cleaned) {
+				challengeCertPath = cleaned
 				if debug {
-					log.Printf("Config: Set challengeCertPath to %s", value)
+					log.Printf("Config: Set challengeCertPath to %s", cleaned)
 				}
 			} else {
-				log.Printf("Warning: Invalid challengeCertPath value: %s", value)
+				log.Printf("Warning: Invalid challengeCertPath value: %s (must be an absolute path)", value)
 			}
 		case "recaptchaSiteKey":
 			recaptchaSiteKey = value
@@ -239,6 +239,27 @@ func readConfigFile(configPath string) error {
 				}
 			} else {
 				log.Printf("Warning: Invalid challengeHTTPPort value: %s (must be between 1 and 65535)", value)
+			}
+		case "trustedProxies":
+			for _, part := range strings.Split(value, ",") {
+				ip := strings.TrimSpace(part)
+				if ip != "" {
+					trustedProxies = append(trustedProxies, ip)
+				}
+			}
+			if debug {
+				log.Printf("Config: Set trustedProxies to %v", trustedProxies)
+			}
+		case "logOutput":
+			if value == "stdout" || value == "syslog" {
+				logOutput = value
+			} else {
+				log.Printf("Warning: Invalid logOutput value: %s (must be 'stdout' or 'syslog')", value)
+			}
+		case "ignoreFiles":
+			ignoreFilesPath = value
+			if debug {
+				log.Printf("Config: Set ignoreFiles to %s", value)
 			}
 		default:
 			log.Printf("Warning: Unknown configuration key: %s", key)
@@ -279,6 +300,9 @@ whitelist = /etc/apacheblock/whitelist.txt
 # Path to domain whitelist file
 domainWhitelist = /etc/apacheblock/domainwhitelist.txt
 
+# Path to file listing log files to ignore (one basename or full path per line)
+ignoreFiles = /etc/apacheblock/ignorefiles.txt
+
 # Path to blocklist file
 blocklist = /etc/apacheblock/blocklist.json
 
@@ -299,6 +323,9 @@ socketPath = /var/run/apacheblock.sock
 
 # Enable debug mode (true/false)
 debug = false
+
+# Logging output: stdout or syslog
+logOutput = stdout
 
 # Enable verbose debug mode (true/false)
 verbose = false

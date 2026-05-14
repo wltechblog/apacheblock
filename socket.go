@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"context"
 )
 
 // SocketPath is the path to the Unix domain socket
@@ -48,7 +50,7 @@ func startSocketServer() error {
 	}
 
 	// Set permissions on the socket to allow non-root clients to connect
-	if err := os.Chmod(SocketPath, 0666); err != nil {
+	if err := os.Chmod(SocketPath, 0600); err != nil {
 		return fmt.Errorf("failed to set socket permissions: %v", err)
 	}
 
@@ -91,7 +93,7 @@ func handleConnection(conn net.Conn) {
 	if apiKey != "" && msg.APIKey != apiKey {
 		// Log invalid key only in debug
 		if debug {
-			log.Printf("Invalid API key received: %s", msg.APIKey)
+			log.Printf("Invalid API key received")
 		}
 
 		// Send error response
@@ -349,30 +351,36 @@ func handleDebugStream(conn net.Conn) error {
 	fmt.Println(response.Result)
 
 	// Set up signal handling for graceful exit
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 
-	// Create a goroutine to handle signals
 	go func() {
-		<-sigChan
-		fmt.Println("\nStopping debug stream...")
-		conn.Close()
-		os.Exit(0)
+		select {
+		case <-sigChan:
+			fmt.Println("\nStopping debug stream...")
+			cancel()
+			conn.Close()
+		case <-ctx.Done():
+		}
 	}()
 
-	// Continuously read and print debug messages
 	for {
 		var msg Message
 		if err := decoder.Decode(&msg); err != nil {
 			if err == io.EOF {
-				// Connection closed by server
 				fmt.Println("Debug stream ended by server.")
+				return nil
+			}
+			if ctx.Err() != nil {
 				return nil
 			}
 			return fmt.Errorf("error reading debug stream: %v", err)
 		}
 
-		// Print the debug message
 		fmt.Print(msg.Result)
 	}
 }

@@ -2,46 +2,35 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"sync"
 	"time"
 )
 
-// Global variables for debug streaming
 var (
-	// Debug stream clients
 	debugStreamClients      = make(map[chan string]struct{})
 	debugStreamClientsMutex sync.Mutex
-
-	// Original log writer
-	originalLogWriter *os.File
-
-	// Debug stream initialized flag
-	debugStreamInitialized bool = false
+	originalLogWriter       io.Writer = os.Stderr
+	debugStreamInitialized  bool      = false
 )
 
-// Custom log writer that captures log output
 type debugLogWriter struct {
-	originalWriter *os.File
+	originalWriter io.Writer
 }
 
-// Write implements the io.Writer interface
 func (w *debugLogWriter) Write(p []byte) (n int, err error) {
-	// Write to the original log writer
 	n, err = w.originalWriter.Write(p)
 	if err != nil {
 		return n, err
 	}
 
-	// Send to all debug stream clients
 	debugStreamClientsMutex.Lock()
 	for client := range debugStreamClients {
 		select {
 		case client <- string(p):
-			// Successfully sent
 		default:
-			// Channel is full or closed, remove it
 			delete(debugStreamClients, client)
 		}
 	}
@@ -50,21 +39,17 @@ func (w *debugLogWriter) Write(p []byte) (n int, err error) {
 	return n, nil
 }
 
-// initDebugStream initializes the debug stream
 func initDebugStream() {
 	if debugStreamInitialized {
 		return
 	}
 
-	// Save the original log writer
-	originalLogWriter = log.Writer().(*os.File)
+	originalLogWriter = log.Writer()
 
-	// Create a new log writer that captures output
 	customWriter := &debugLogWriter{
 		originalWriter: originalLogWriter,
 	}
 
-	// Set the new log writer
 	log.SetOutput(customWriter)
 
 	debugStreamInitialized = true

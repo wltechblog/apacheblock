@@ -82,16 +82,14 @@ func createExampleDomainWhitelistFile(filePath string) error {
 	content := `# Apache Block Domain Whitelist
 # Add one domain name per line
 # Lines starting with # are comments and will be ignored
-# Examples:
-
-# Individual domain names
-example.com
-google.com
-cloudflare.com
+# Examples (uncomment to use):
+# example.com
+# google.com
+# cloudflare.com
 
 # Subdomains
-api.example.com
-cdn.example.com
+# api.example.com
+# cdn.example.com
 `
 	return os.WriteFile(filePath, []byte(content), 0644)
 }

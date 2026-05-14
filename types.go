@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ var (
 	whitelistFilePath   string = "/etc/apacheblock/whitelist.txt"
 	domainWhitelistPath string = "/etc/apacheblock/domainwhitelist.txt"
 	blocklistFilePath   string = "/etc/apacheblock/blocklist.json"
+	ignoreFilesPath     string = "/etc/apacheblock/ignorefiles.txt"
 	// rulesFilePath is declared locally in rules.go
 	firewallChain string = "apacheblock" // Renamed from firewallTable
 	firewallType  string = "iptables"    // New: "iptables" or "nftables"
@@ -50,14 +52,18 @@ var (
 
 	// Challenge Feature Configuration
 	challengeEnable                bool          = false
-	challengePort                  int           = 4443 // Default challenge HTTPS port
-	challengeHTTPPort              int           = 8088 // New: Default challenge HTTP redirect port
+	challengePort                  int           = 4443
+	challengeHTTPPort              int           = 8088
 	challengeCertPath              string        = "/etc/apacheblock/certs"
 	recaptchaSiteKey               string        = ""
 	recaptchaSecretKey             string        = ""
-	challengeTempWhitelistDuration time.Duration = 5 * time.Minute // Duration for temp whitelist
+	challengeTempWhitelistDuration time.Duration = 5 * time.Minute
+	trustedProxies                 []string
+	logOutput                      string = "stdout"
+	logWriter                      io.Writer
+	ignoredFiles                          = map[string]bool{}
+	ignoredFilesMu                 sync.RWMutex
 
-	// Internal State (Temporary Whitelist)
 	tempWhitelist      map[string]time.Time // Map IP to expiry time
 	tempWhitelistMutex sync.Mutex           // Mutex for temporary whitelist map
 )
