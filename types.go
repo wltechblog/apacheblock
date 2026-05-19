@@ -64,13 +64,24 @@ var (
 	ignoredFiles                          = map[string]bool{}
 	ignoredFilesMu                 sync.RWMutex
 
+	blockedIPInfo   map[string]*BlockInfo
+	blockedIPInfoMu sync.RWMutex
+
+	reportEmail     string
+	reportSMTPHost  string
+	reportSMTPPort  int
+	reportSMTPUser  string
+	reportSMTPPass  string
+	reportSMTPFrom  string
+	reportSubject   string = "[ApacheBlock] False Positive Report"
+
 	tempWhitelist      map[string]time.Time // Map IP to expiry time
 	tempWhitelistMutex sync.Mutex           // Mutex for temporary whitelist map
 )
 
 func init() {
-	// Initialize maps
 	tempWhitelist = make(map[string]time.Time)
+	blockedIPInfo = make(map[string]*BlockInfo)
 }
 
 // AccessRecord tracks suspicious activity for an IP address
@@ -95,4 +106,14 @@ type CaddyLogEntry struct {
 		URI      string `json:"uri"`
 	} `json:"request"`
 	Status int64 `json:"status"`
+}
+
+type BlockInfo struct {
+	IP                string
+	TriggeringRequest string
+	Rule              string
+	UserAgent         string
+	FilePath          string
+	BlockedAt         time.Time
+	Subnet            string
 }

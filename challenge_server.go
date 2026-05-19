@@ -68,17 +68,30 @@ const challengeHTMLTemplate = `
         button { padding: 10px 20px; background-color: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; }
         button:hover { background-color: #0056b3; }
         .error { color: red; margin-top: 10px; }
+        .ip-display { background-color: #eef; border: 1px solid #ccd; border-radius: 4px; padding: 12px 16px; margin: 16px 0; font-size: 15px; text-align: center; }
+        .ip-display code { font-size: 20px; font-weight: bold; color: #333; letter-spacing: 0.5px; }
+        .ip-display .label { font-size: 13px; color: #666; margin-bottom: 4px; }
+        .false-positive { margin: 16px 0; padding: 12px; background-color: #fff8e1; border: 1px solid #ffe082; border-radius: 4px; }
+        .false-positive label { cursor: pointer; line-height: 1.6; }
+        .false-positive input[type="checkbox"] { margin-right: 8px; }
     </style>
     <script src="https://www.google.com/recaptcha/api.js" async defer></script>
 </head>
 <body>
     <div class="container">
         <h1>Access Temporarily Restricted</h1>
-        <p>Our system has detected unusual activity from your IP address ({{.IPAddress}}). To protect the service, access has been temporarily restricted.</p>
-        <p>Please complete the challenge below to regain access.</p>
+        <p>Our system has detected unusual activity and has temporarily restricted access. Please complete the challenge below to regain access.</p>
+        <div class="ip-display">
+            <div class="label">Your IP Address</div>
+            <code>{{.IPAddress}}</code>
+        </div>
+        <p>If you need to contact support, please reference the IP address shown above.</p>
 
         <form action="/verify" method="POST">
             <div class="g-recaptcha" data-sitekey="{{.RecaptchaSiteKey}}"></div>
+            <div class="false-positive">
+                <label><input type="checkbox" name="false_positive" value="1"> I believe this block was made in error</label>
+            </div>
             <button type="submit">Verify</button>
         </form>
         {{if .ErrorMessage}}
@@ -436,15 +449,40 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Verification Successful ---
-	log.Printf("Verification successful for IP: %s on domain %s (User-Agent: %s)", clientIP, domainName, userAgent)
+	falsePositive := r.FormValue("false_positive") == "1"
+	blockInfo := getBlockInfo(clientIP)
+
+	log.Printf("Verification successful for IP: %s on domain %s (User-Agent: %s) false_positive=%v", clientIP, domainName, userAgent, falsePositive)
 
 	if fwManager == nil {
 		http.Error(w, "Firewall manager not initialized.", http.StatusInternalServerError)
 		return
 	}
 
-	// Check if the IP is contained in a blocked subnet
 	containingSubnet := findContainingSubnet(clientIP)
+
+	if falsePositive && isReportingEnabled() {
+		info := blockInfo
+		if info != nil && containingSubnet != "" {
+			info = &BlockInfo{
+				IP:                blockInfo.IP,
+				TriggeringRequest: blockInfo.TriggeringRequest,
+				Rule:              blockInfo.Rule,
+				UserAgent:         blockInfo.UserAgent,
+				FilePath:          blockInfo.FilePath,
+				BlockedAt:         blockInfo.BlockedAt,
+				Subnet:            containingSubnet,
+			}
+		}
+		go func() {
+			if err := sendFalsePositiveReport(clientIP, userAgent, domainName, info); err != nil {
+				log.Printf("Warning: failed to send false positive report for %s: %v", clientIP, err)
+			}
+		}()
+	} else if falsePositive {
+		log.Printf("Warning: false positive report requested for %s but email reporting is not configured (set reportEmail and reportSMTPHost)", clientIP)
+	}
+
 	if containingSubnet != "" {
 		if err := unblockIPFromSubnet(clientIP, containingSubnet); err != nil {
 			log.Printf("Failed to unblock IP %s from subnet %s after verification: %v", clientIP, containingSubnet, err)

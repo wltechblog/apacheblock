@@ -113,7 +113,7 @@ func clientUnblockIP(target string) error {
 		}
 	} else {
 		delete(blockedIPs, target)
-		// Remove the IP's access log entry so it starts fresh
+		removeBlockInfo(target)
 		if _, exists := ipAccessLog[target]; exists {
 			delete(ipAccessLog, target)
 			if debug {

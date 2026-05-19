@@ -261,6 +261,24 @@ func readConfigFile(configPath string) error {
 			if debug {
 				log.Printf("Config: Set ignoreFiles to %s", value)
 			}
+		case "reportEmail":
+			reportEmail = value
+		case "reportSMTPHost":
+			reportSMTPHost = value
+		case "reportSMTPPort":
+			if iVal, err := strconv.Atoi(value); err == nil && iVal > 0 && iVal < 65536 {
+				reportSMTPPort = iVal
+			} else {
+				log.Printf("Warning: Invalid reportSMTPPort value: %s", value)
+			}
+		case "reportSMTPUser":
+			reportSMTPUser = value
+		case "reportSMTPPass":
+			reportSMTPPass = value
+		case "reportSMTPFrom":
+			reportSMTPFrom = value
+		case "reportSubject":
+			reportSubject = value
 		default:
 			log.Printf("Warning: Unknown configuration key: %s", key)
 		}
@@ -369,6 +387,23 @@ challengeTempWhitelistDuration = 5m
 
 # Port for the internal HTTP server that redirects to the HTTPS challenge server (listens on HTTP)
 challengeHTTPPort = 8088
+
+# Comma-separated list of trusted reverse proxy IPs
+# Only trust X-Forwarded-For/X-Real-IP headers from these addresses
+trustedProxies =
+
+# --- False Positive Reporting ---
+# When a user checks "I believe this block was made in error" and passes the challenge,
+# an email is sent with their details and the triggering log entry.
+
+# Email address to receive reports (leave empty to disable reporting)
+# reportEmail = admin@example.com
+# reportSMTPHost = smtp.example.com
+# reportSMTPPort = 587
+# reportSMTPUser =
+# reportSMTPPass =
+# reportSMTPFrom = apacheblock@example.com
+# reportSubject = [ApacheBlock] False Positive Report - {ip}
 `
 
 	return os.WriteFile(configPath, []byte(content), 0644)

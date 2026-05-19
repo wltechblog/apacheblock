@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 // --- Firewall Manager Interface ---
@@ -653,6 +654,18 @@ func removePortBlockingRules() error {
 }
 
 // blockIP adds an IP to the blocklist and blocks it in the firewall
+func getBlockInfo(ip string) *BlockInfo {
+	blockedIPInfoMu.RLock()
+	defer blockedIPInfoMu.RUnlock()
+	return blockedIPInfo[ip]
+}
+
+func removeBlockInfo(ip string) {
+	blockedIPInfoMu.Lock()
+	delete(blockedIPInfo, ip)
+	blockedIPInfoMu.Unlock()
+}
+
 func blockIP(ip, filePath string, rule string, triggeringRequest string, userAgent ...string) {
 	if fwManager == nil {
 		log.Println("Error: Firewall manager not initialized in blockIP")
@@ -704,6 +717,21 @@ func blockIP(ip, filePath string, rule string, triggeringRequest string, userAge
 	} else {
 		log.Printf("BLOCKED IP %s from %s for %s Request: %s", ip, filePath, rule, triggeringRequest)
 	}
+
+	ua := ""
+	if len(userAgent) > 0 {
+		ua = userAgent[0]
+	}
+	blockedIPInfoMu.Lock()
+	blockedIPInfo[ip] = &BlockInfo{
+		IP:                ip,
+		TriggeringRequest: triggeringRequest,
+		Rule:              rule,
+		UserAgent:         ua,
+		FilePath:          filePath,
+		BlockedAt:         time.Now(),
+	}
+	blockedIPInfoMu.Unlock()
 }
 
 // blockSubnet adds a subnet to the blocklist and blocks it in the firewall
